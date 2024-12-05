@@ -55,7 +55,7 @@ for i in range(40):
 
     del differences_w1, differences_w2, differences_w3, mean_w1, mean_w2, mean_w3
 
-ppl_eval(model, tokenizer, datasets=['wikitext2'], model_seq_len=2048, batch_size=2, device="cuda")
+ppl_eval(model, tokenizer, datasets=['wikitext2'], model_seq_len=2048, batch_size=2)
 
 # PPL before svd: {'wikitext2': 6.569596978661885}
 # Weight Memory: 28195.03955078125 MiB

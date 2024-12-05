@@ -1,0 +1,109 @@
+
+Mixtral
+PPL after evaluation: {'wikitext2': 3.986114501953125}
+Average Allocated Memory: 100643.77 MiB
+Average Reserved Memory: 119129.82 MiB
+Total number of parameters: 46.70B
+Number of trainable parameters: 46.70B
+Number of non-trainable parameters: 0.00B
+
+Mixtral mean expert
+
+PPL after evaluation: {'wikitext2': 800.7800903320312}
+Average Allocated Memory: 25437.96 MiB
+Average Reserved Memory: 160404.18 MiB
+Total number of parameters: 7.24B
+Number of trainable parameters: 7.24B
+Number of non-trainable parameters: 0.00B
+
+差不多
+PPL after evaluation: {'wikitext2': 799.788330078125}
+Average Allocated Memory: 100643.77 MiB
+Average Reserved Memory: 124716.00 MiB
+Total number of parameters: 46.70B
+Number of trainable parameters: 46.70B
+Number of non-trainable parameters: 0.00B
+
+ratio=1.0
+Experiment: SmolLlamix-8x101M_ratio-1
+PPL after evaluation: {'wikitext2': 4.567188739776611}
+Average Allocated Memory: 100649.59 MiB
+Average Reserved Memory: 119863.64 MiB
+Total number of parameters: 46.70B
+Number of trainable parameters: 46.70B
+Number of non-trainable parameters: 0.00B
+
+ratio=0.5
+Experiment: Mixtral_ratio-0.5
+PPL after evaluation: {'wikitext2': 7.217347621917725}
+Average Allocated Memory: 100649.59 MiB
+Average Reserved Memory: 120414.55 MiB
+Total number of parameters: 46.70B
+Number of trainable parameters: 46.70B
+Number of non-trainable parameters: 0.00B
+
+
+ratio=0.1
+Experiment: SmolLlamix-8x101M_ratio-0.1
+PPL after evaluation: {'wikitext2': 29.03373146057129}
+Average Allocated Memory: 100649.59 MiB
+Average Reserved Memory: 120983.64 MiB
+Total number of parameters: 46.70B
+Number of trainable parameters: 46.70B
+Number of non-trainable parameters: 0.00B
+----------------------------------------------------------------
+
+SmolLlamix-8x101M
+
+PPL after evaluation: {'wikitext2': 26.390592575073242}
+Average Allocated Memory: 8128.93 MiB
+Average Reserved Memory: 15292.55 MiB
+Total number of parameters: 0.40B
+Number of trainable parameters: 0.40B
+Number of non-trainable parameters: 0.00B
+
+----------------------------------------------------------------
+
+SmolLlamix-8x101M mean expert
+
+PPL after evaluation: {'wikitext2': 36.36859893798828}
+Average Allocated Memory: 7564.84 MiB
+Average Reserved Memory: 16740.00 MiB
+Total number of parameters: 0.10B
+Number of trainable parameters: 0.10B
+Number of non-trainable parameters: 0.00B
+
+差不多
+Experiment: SmolLlamix-8x101M
+PPL after evaluation: {'wikitext2': 36.355106353759766}
+Average Allocated Memory: 8128.93 MiB
+Average Reserved Memory: 15803.45 MiB
+Total number of parameters: 0.40B
+Number of trainable parameters: 0.40B
+Number of non-trainable parameters: 0.00B
+
+ratio=1.0
+PPL after evaluation: {'wikitext2': 26.585735321044922}
+Average Allocated Memory: 8163.84 MiB
+Average Reserved Memory: 20620.91 MiB
+Total number of parameters: 0.40B
+Number of trainable parameters: 0.40B
+Number of non-trainable parameters: 0.00B
+
+ratio=0.1
+Experiment: SmolLlamix-8x101M_0.1
+PPL after evaluation: {'wikitext2': 31.862152099609375}
+Average Allocated Memory: 8163.84 MiB
+Average Reserved Memory: 20648.18 MiB
+Total number of parameters: 0.40B
+Number of trainable parameters: 0.40B
+Number of non-trainable parameters: 0.00B
+
+ratio=0.5
+Experiment: SmolLlamix-8x101M_ratio-0.5
+PPL after evaluation: {'wikitext2': 27.76469612121582}
+Average Allocated Memory: 8163.84 MiB
+Average Reserved Memory: 20620.91 MiB
+Total number of parameters: 0.40B
+Number of trainable parameters: 0.40B
+Number of non-trainable parameters: 0.00B

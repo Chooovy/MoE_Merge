@@ -6,6 +6,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 from pathlib import Path
 import json
 from tqdm import tqdm
+import os
+from accelerate import init_empty_weights
 
 def get_free_gpu():
     num_gpus = torch.cuda.device_count()
@@ -29,20 +31,43 @@ def save_model(model, path):
     print(f"Model saved to {path}")
 
 
-def load_model(path):
 
-    # config = AutoConfig.from_pretrained("/aifs4su/gov/models/Mixtral-8x7B-v0.1/")
-    # model = AutoModelForCausalLM.from_config(config, trust_remote_code=True, torch_dtype=torch.bfloat16).to('cuda')
-
-    model = AutoModelForCausalLM.from_pretrained("/aifs4su/lilujun/SVD-MoE-merge/SmolLlamix-8x101M", device_map="auto", trust_remote_code=True, 
-                                             torch_dtype=torch.bfloat16)
-    for i in range(len(model.model.layers)):
-        model.model.layers[i].block_sparse_moe = Merge_MixtralSparseMoeBlock(model.model.layers[i].block_sparse_moe.config, 
-                                                                             ratio=0.5, expert_freq=None).to(model.model.layers[i].block_sparse_moe.gate.weight.device)
-    model.load_state_dict(torch.load(path, map_location='cuda:0'))
+def load_model_tqdm(checkpoint_path, base_model_path, ratio=0.35):
+    with init_empty_weights():
+        model = AutoModelForCausalLM.from_pretrained(base_model_path, 
+                                                    device_map="auto", 
+                                                    trust_remote_code=True, 
+                                                    torch_dtype=torch.bfloat16)
+        
+    
+    for i in tqdm(range(len(model.model.layers)), desc="Initializing layers"):
+        model.model.layers[i].block_sparse_moe = Merge_MixtralSparseMoeBlock(
+            model.model.layers[i].block_sparse_moe.config, 
+            ratio=ratio, 
+            expert_freq=None
+        ).to(model.model.layers[i].block_sparse_moe.gate.weight.device)
+    
+    # print("Loading checkpoint...")
+    checkpoint = torch.load(checkpoint_path, map_location='cuda:0')
+    
+    # print("Loading state dict...")
+    # 创建一个进度条来显示加载进度
+    pbar = tqdm(total=len(checkpoint), desc="Loading checkpoint")
+    for k, v in checkpoint.items():
+        model.state_dict()[k].copy_(v)
+        pbar.update(1)
+    pbar.close()
+    
     return model
 
-
+import random
+import numpy as np
+seed = 42  # or any other integer
+torch.manual_seed(seed)
+np.random.seed(seed)
+random.seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
 
 
 class Merge_MixtralSparseMoeBlock(nn.Module):
@@ -74,11 +99,14 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
         self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False, dtype=torch.bfloat16)
         
         # self.experts = nn.ModuleList([delta_MixtralBlockSparseTop2MLP(config, ratio) for _ in range(self.num_experts)])
-        self.shared_experts = delta_MixtralBlockSparseTop2MLP(config, ratio) 
-        self.experts = nn.ModuleList([self.shared_experts for _ in range(self.num_experts)])
+        # self.shared_experts = delta_MixtralBlockSparseTop2MLP(config, ratio) 
+        # self.shared_experts = MixtralBlockSparseTop2MLP(config)
+        # self.shared_experts = share_expert_with_delta_weight(config, ratio) 
 
+        # self.experts = nn.ModuleList([share_expert_with_delta_weight(config, ratio)  for _ in range(self.num_experts)])
+        self.experts = nn.ModuleList([MixtralBlockSparseTop2MLP(config)  for _ in range(self.num_experts)])
 
-        # Jitter parameters
+        # Jitter parametersmodel2.model.layers[i].block_sparse_moe.num_experts
         self.jitter_noise = config.router_jitter_noise
 
         self.expert_frequency = [0] * self.num_experts
@@ -133,6 +161,28 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
         """重置每个专家的激活频率为零"""
         self.expert_frequency = [0] * self.num_experts
 
+    # @staticmethod
+    # @torch.no_grad()
+    # def svd_delta(W, ratio=1):
+    #     U, S, VT = torch.linalg.svd(W.float(), full_matrices=False)
+    #     num_s_after_trunc = int(W.shape[0] * W.shape[1] * ratio / (W.shape[0] + W.shape[1]))
+    #     del W
+    #     truc_s = S[:num_s_after_trunc]
+    #     del S
+    #     truc_u = U[:, :num_s_after_trunc]
+    #     del U
+    #     truc_v = VT[:num_s_after_trunc, :]
+    #     del VT
+    #     truc_sigma = torch.diag(truc_s)
+    #     del truc_s
+    #     #### Replace Attn, MLP ####
+    #     # sqrtSigma = torch.sqrt(truc_sigma)
+    #     sqrtSigma = truc_sigma
+    #     svd_u = torch.matmul(truc_u, sqrtSigma)
+    #     svd_v = torch.matmul(sqrtSigma, truc_v)
+
+    #     return svd_u.to(torch.bfloat16), svd_v.to(torch.bfloat16)
+
     @staticmethod
     @torch.no_grad()
     def svd_delta(W, ratio=1):
@@ -147,13 +197,9 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
         del VT
         truc_sigma = torch.diag(truc_s)
         del truc_s
-        # #### Replace Attn, MLP ####
-        # sqrtSigma = torch.sqrt(truc_sigma)
-        sqrtSigma = truc_sigma
-        svd_u = torch.matmul(truc_u, sqrtSigma)
-        svd_v = torch.matmul(sqrtSigma, truc_v)
-        # result = truc_u @ truc_sigma @ truc_v
-        return svd_u.to(torch.bfloat16), svd_v.to(torch.bfloat16)
+        result = truc_u @ truc_sigma @ truc_v
+        return result.to(torch.bfloat16)
+
 
     @torch.no_grad()
     def merge_experts(self, module):
@@ -184,82 +230,35 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
         self.expert_mean["w1_mean"] /= total_weight
         self.expert_mean["w2_mean"] /= total_weight
         self.expert_mean["w3_mean"] /= total_weight
-
         del total_weight
 
-        self.shared_experts.w1.weight.data = self.expert_mean["w1_mean"]
-        self.shared_experts.w2.weight.data = self.expert_mean["w2_mean"]
-        self.shared_experts.w3.weight.data = self.expert_mean["w3_mean"]
+        # self.shared_experts.w1.weight.data = self.expert_mean["w1_mean"]
+        # self.shared_experts.w2.weight.data = self.expert_mean["w2_mean"]
+        # self.shared_experts.w3.weight.data = self.expert_mean["w3_mean"]
 
-        # for j in tqdm(range(self.num_experts), desc="Merging experts", leave=False):
-        #     self.experts[j].u1.weight.data, self.experts[j].v1.weight.data = self.svd_delta(module.experts[j].w1.weight - self.expert_mean["w1_mean"], ratio=self.ratio)
-        #     self.experts[j].u2.weight.data, self.experts[j].v2.weight.data = self.svd_delta(module.experts[j].w2.weight - self.expert_mean["w2_mean"], ratio=self.ratio)
-        #     self.experts[j].u3.weight.data, self.experts[j].v3.weight.data = self.svd_delta(module.experts[j].w3.weight - self.expert_mean["w3_mean"], ratio=self.ratio)
         for j in tqdm(range(self.num_experts), desc="Merging experts", leave=False):
-            self.experts[j].u1_weight.data, self.experts[j].v1_weight.data = self.svd_delta(module.experts[j].w1.weight - self.expert_mean["w1_mean"], ratio=self.ratio)
-            self.experts[j].u2_weight.data, self.experts[j].v2_weight.data = self.svd_delta(module.experts[j].w2.weight - self.expert_mean["w2_mean"], ratio=self.ratio)
-            self.experts[j].u3_weight.data, self.experts[j].v3_weight.data = self.svd_delta(module.experts[j].w3.weight - self.expert_mean["w3_mean"], ratio=self.ratio)
-        
-        # total_weight = 0 
-        # for j in range(self.num_experts):
-        #     w1_weight = self.experts[j].w1.weight
-        #     freq = self.expert_freq[j]
-        #     if self.expert_mean["w1_mean"] is None:
-        #         self.expert_mean["w1_mean"] = w1_weight.clone() * freq
-        #     else:
-        #         self.expert_mean["w1_mean"] += w1_weight * freq
-        #     total_weight += freq
-
-        # self.expert_mean["w1_mean"] /= total_weight
-        # del total_weight
-
-        # for j in range(self.num_experts):
-        #     w1_weight = self.experts[j].w1.weight
-        #     self.delta_experts[j].u1.weight.data, self.delta_experts[j].v1.weight.data = self.svd_delta(w1_weight.data - self.expert_mean["w1_mean"].data)
-        #     self.experts[j] = self.delta_experts[j]
-        #     self.delta_experts[j] = None
-
-        # total_weight = 0
-        # for j in range(self.num_experts):
-        #     w2_weight = self.experts[j].w2.weight
-        #     freq = self.expert_freq[j]
-        #     if self.expert_mean["w2_mean"] is None:
-        #         self.expert_mean["w2_mean"] = w2_weight.clone() * freq
-        #     else:
-        #         self.expert_mean["w2_mean"] += w2_weight * freq
-        #     total_weight += freq
-
-        # self.expert_mean["w2_mean"] /= total_weight
-        # del total_weight
-
-        # for j in range(self.num_experts):
-        #     w2_weight = self.experts[j].w2.weight
-        #     self.delta_experts[j].u2.weight.data, self.delta_experts[j].v2.weight.data = self.svd_delta(w2_weight.data - self.expert_mean["w2_mean"].data)
-        #     self.experts[j] = self.delta_experts[j]
-        #     self.delta_experts[j] = None    
-
-        # total_weight = 0
-        # for j in range(self.num_experts):
-        #     w3_weight = self.experts[j].w3.weight
-        #     freq = self.expert_freq[j]
-        #     if self.expert_mean["w3_mean"] is None:
-        #         self.expert_mean["w3_mean"] = w3_weight.clone() * freq 
-        #     else:
-        #         self.expert_mean["w3_mean"] += w3_weight * freq 
-        #     total_weight += freq
-
-        # self.expert_mean["w3_mean"] /= total_weight
-        # del total_weight
-
-        # for j in range(self.num_experts):
-        #     w3_weight = self.experts[j].w3.weight
-        #     self.delta_experts[j].u3.weight.data, self.delta_experts[j].v3.weight.data = self.svd_delta(w3_weight.data - self.expert_mean["w3_mean"].data)
-        #     self.experts[j] = self.delta_experts[j]
-        #     self.delta_experts[j] = None
+            w1_weight = module.experts[j].w1.weight
+            w2_weight = module.experts[j].w2.weight
+            w3_weight = module.experts[j].w3.weight
+            self.experts[j].w1.weight.data = self.expert_mean["w1_mean"] + self.svd_delta(w1_weight - self.expert_mean["w1_mean"], ratio=self.ratio)
+            self.experts[j].w2.weight.data = self.expert_mean["w2_mean"] + self.svd_delta(w2_weight - self.expert_mean["w2_mean"], ratio=self.ratio)
+            self.experts[j].w3.weight.data = self.expert_mean["w3_mean"] + self.svd_delta(w3_weight - self.expert_mean["w3_mean"], ratio=self.ratio)
+            # self.experts[j].w1.weight.data = self.expert_mean["w1_mean"]
+            # self.experts[j].w2.weight.data = self.expert_mean["w2_mean"]
+            # self.experts[j].w3.weight.data = self.expert_mean["w3_mean"]
+            
+            # self.experts[j].delta_w1.weight.data = self.svd_delta(w1_weight - self.expert_mean["w1_mean"], ratio=self.ratio)
+            # self.experts[j].delta_w2.weight.data = self.svd_delta(w2_weight - self.expert_mean["w2_mean"], ratio=self.ratio)
+            # self.experts[j].delta_w3.weight.data = self.svd_delta(w3_weight - self.expert_mean["w3_mean"], ratio=self.ratio)
+            # self.experts[j].u1_weight.data, self.experts[j].v1_weight.data = self.svd_delta(module.experts[j].w1.weight - self.expert_mean["w1_mean"], ratio=self.ratio)
+            # self.experts[j].u2_weight.data, self.experts[j].v2_weight.data = self.svd_delta(module.experts[j].w2.weight - self.expert_mean["w2_mean"], ratio=self.ratio)
+            # self.experts[j].u3_weight.data, self.experts[j].v3_weight.data = self.svd_delta(module.experts[j].w3.weight - self.expert_mean["w3_mean"], ratio=self.ratio)
+            # self.experts[j].u1.weight.data, self.experts[j].v1.weight.data = self.svd_delta(module.experts[j].w1.weight - self.expert_mean["w1_mean"], ratio=self.ratio)
+            # self.experts[j].u2.weight.data, self.experts[j].v2.weight.data = self.svd_delta(module.experts[j].w2.weight - self.expert_mean["w2_mean"], ratio=self.ratio)
+            # self.experts[j].u3.weight.data, self.experts[j].v3.weight.data = self.svd_delta(module.experts[j].w3.weight - self.expert_mean["w3_mean"], ratio=self.ratio)
 
 
-# 现在存的是delta不是orginal weight
-# class delta_MixtralBlockSparseTop2MLP(nn.Module):
+# class delta_weight():
 #     def __init__(self, config: MixtralConfig, ratio=1):
 #         super().__init__()
 #         self.intermediate_dim = config.intermediate_size
@@ -268,68 +267,84 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
 #         self.ratio = ratio
 #         self.low_rank = int(self.intermediate_dim * self.hidden_dim * self.ratio / (self.intermediate_dim + self.hidden_dim))
 
+#         self.u1_weight = nn.Parameter(torch.empty(self.low_rank, self.intermediate_dim, dtype=torch.bfloat16))
+#         self.v1_weight = nn.Parameter(torch.empty(self.hidden_dim, self.low_rank, dtype=torch.bfloat16))
 
-#         # self.w1 = nn.Linear(self.hidden_dim, self.intermediate_dim, bias=False)
-#         self.u1 = nn.Linear(self.low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
-#         self.v1 = nn.Linear(self.hidden_dim, self.low_rank, bias=False, dtype=torch.bfloat16)
+#         self.u2_weight = nn.Parameter(torch.empty(self.low_rank, self.hidden_dim, dtype=torch.bfloat16))
+#         self.v2_weight = nn.Parameter(torch.empty(self.intermediate_dim, self.low_rank, dtype=torch.bfloat16))
 
+#         self.u3_weight = nn.Parameter(torch.empty(self.low_rank, self.intermediate_dim, dtype=torch.bfloat16))
+#         self.v3_weight = nn.Parameter(torch.empty(self.hidden_dim, self.low_rank, dtype=torch.bfloat16))
 
-#         # self.w2 = nn.Linear(self.ffn_dim, self.hidden_dim, bias=False)
-#         self.u2 = nn.Linear(self.low_rank, self.hidden_dim, bias=False, dtype=torch.bfloat16)
-#         self.v2 = nn.Linear(self.intermediate_dim, self.low_rank, bias=False, dtype=torch.bfloat16)
-
-
-#         # self.w3 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False)
-#         self.u3 = nn.Linear(self.low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
-#         self.v3 = nn.Linear(self.hidden_dim, self.low_rank, bias=False, dtype=torch.bfloat16)
-
-
-#         self.act_fn = ACT2FN[config.hidden_act]
+# class delta_MixtralBlockSparseTop2MLP(MixtralBlockSparseTop2MLP, delta_weight):
+#     def __init__(self, config: MixtralConfig, ratio=1):
+#         MixtralBlockSparseTop2MLP.__init__(self, config)
+#         delta_weight.__init__(self, config, ratio)
 
 #     def forward(self, hidden_states):
-#         up = self.u3(self.v3(hidden_states))
-#         gate = self.u1(self.v1(hidden_states))
-#         return self.u2(self.v2(self.act_fn(gate) * up))
-    
+#         up = self.w3(hidden_states) + (hidden_states @ self.v3_weight.t()) @ self.u3_weight.t()
+        
+
+#         gate = self.w1(hidden_states) + (hidden_states @ self.v1_weight.t()) @ self.u1_weight.t()
+
+#         return self.w2(self.act_fn(gate) * up) + (self.act_fn(gate) * up @ self.v2_weight.t()) @ self.u2_weight.t()
 
 
-class delta_weight():
+class delta_weight_linear(nn.Module):
     def __init__(self, config: MixtralConfig, ratio=1):
         super().__init__()
         self.intermediate_dim = config.intermediate_size
         self.hidden_dim = config.hidden_size
+        self.dtype = torch.bfloat16
+
+        self.w1 = nn.Linear(self.hidden_dim, self.intermediate_dim, bias=False, dtype=self.dtype)
+        self.w2 = nn.Linear(self.intermediate_dim, self.hidden_dim, bias=False, dtype=self.dtype)
+        self.w3 = nn.Linear(self.hidden_dim, self.intermediate_dim, bias=False, dtype=self.dtype)
+
+        self.act_fn = ACT2FN[config.hidden_act]
+
+        self.delta_w1 = nn.Linear(self.hidden_dim, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
+        self.delta_w2 = nn.Linear(self.intermediate_dim, self.hidden_dim, bias=False, dtype=torch.bfloat16)
+        self.delta_w3 = nn.Linear(self.hidden_dim, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
+
+    def forward(self, hidden_states):
+        up = self.w3(hidden_states) + self.delta_w3(hidden_states)
+        gate = self.w1(hidden_states) + self.delta_w1(hidden_states)
+        return self.w2(self.act_fn(gate) * up) + self.delta_w2(self.act_fn(gate) * up)
+
+
+class share_expert_with_delta_weight(nn.Module):
+    def __init__(self, config: MixtralConfig, ratio=1):
+        super().__init__()
+        self.intermediate_dim = config.intermediate_size
+        self.hidden_dim = config.hidden_size
+        self.dtype = torch.bfloat16
+
+        self.w1 = nn.Linear(self.hidden_dim, self.intermediate_dim, bias=False, dtype=self.dtype)
+        self.w2 = nn.Linear(self.intermediate_dim, self.hidden_dim, bias=False, dtype=self.dtype)
+        self.w3 = nn.Linear(self.hidden_dim, self.intermediate_dim, bias=False, dtype=self.dtype)
+
+        self.act_fn = ACT2FN[config.hidden_act]
 
         self.ratio = ratio
         self.low_rank = int(self.intermediate_dim * self.hidden_dim * self.ratio / (self.intermediate_dim + self.hidden_dim))
 
+        self.u1 = nn.Linear(self.low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
+        self.v1 = nn.Linear(self.hidden_dim, self.low_rank, bias=False, dtype=torch.bfloat16)
 
-        # self.w1 = nn.Linear(self.hidden_dim, self.intermediate_dim, bias=False)
-        # Replace nn.Linear with nn.Parameter
-        self.u1_weight = nn.Parameter(torch.empty(self.low_rank, self.intermediate_dim, dtype=torch.bfloat16))
-        self.v1_weight = nn.Parameter(torch.empty(self.hidden_dim, self.low_rank, dtype=torch.bfloat16))
+        self.u2 = nn.Linear(self.low_rank, self.hidden_dim, bias=False, dtype=torch.bfloat16)
+        self.v2 = nn.Linear(self.intermediate_dim, self.low_rank, bias=False, dtype=torch.bfloat16)
 
-        self.u2_weight = nn.Parameter(torch.empty(self.low_rank, self.hidden_dim, dtype=torch.bfloat16))
-        self.v2_weight = nn.Parameter(torch.empty(self.intermediate_dim, self.low_rank, dtype=torch.bfloat16))
+        self.u3 = nn.Linear(self.low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
+        self.v3 = nn.Linear(self.hidden_dim, self.low_rank, bias=False, dtype=torch.bfloat16)
 
-        self.u3_weight = nn.Parameter(torch.empty(self.low_rank, self.intermediate_dim, dtype=torch.bfloat16))
-        self.v3_weight = nn.Parameter(torch.empty(self.hidden_dim, self.low_rank, dtype=torch.bfloat16))
+        # v is right, u is left
 
-        # self.act_fn = ACT2FN[config.hidden_act]
-
-    # def forward(self, hidden_states, mean_weight = {"w1_mean": None, "w2_mean": None, "w3_mean": None}):
-    #     up = self.u3(self.v3(hidden_states))
-    #     gate = self.u1(self.v1(hidden_states))
-    #     return self.u2(self.v2(self.act_fn(gate) * up))
-
-class delta_MixtralBlockSparseTop2MLP(MixtralBlockSparseTop2MLP, delta_weight):
-    def __init__(self, config: MixtralConfig, ratio=1):
-        MixtralBlockSparseTop2MLP.__init__(self, config)
-        delta_weight.__init__(self, config, ratio)
-
+    # def forward(self, hidden_states):
+    #     up = self.w3(hidden_states) + self.u3(self.v3(hidden_states))
+    #     gate = self.w1(hidden_states) + self.u1(self.v1(hidden_states))
+    #     return self.w2(self.act_fn(gate) * up) + self.u2(self.v2(self.act_fn(gate) * up))
     def forward(self, hidden_states):
-        up = self.w3(hidden_states) + (hidden_states @ self.v3_weight.t()) @ self.u3_weight.t()
-        
-
-        gate = self.w1(hidden_states) + (hidden_states @ self.v1_weight.t()) @ self.u1_weight.t()
-
-        return self.w2(self.act_fn(gate) * up) + (self.act_fn(gate) * up @ self.v2_weight.t()) @ self.u2_weight.t()
+        up = self.w3(hidden_states)
+        gate = self.w1(hidden_states)
+        return self.w2(self.act_fn(gate) * up)

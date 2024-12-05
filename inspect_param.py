@@ -10,7 +10,7 @@ def inspect_model_weights(path):
         print(f"Key: {key}, dtype: {value.dtype}")
 
 # Path to the .pt file
-model_path = "/aifs4su/lilujun/SVD-MoE-merge/MoE/SmolLlamix-8x101M_0.5_svd_delta_merged.pt"
+model_path = "/aifs4su/lilujun/SVD-MoE-merge/MoE/SmolLlamix-8x101M_0.35_svd_delta_merged.pt"
 
 # Inspect the model weights
 inspect_model_weights(model_path)
