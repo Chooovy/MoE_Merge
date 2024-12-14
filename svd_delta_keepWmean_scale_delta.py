@@ -22,9 +22,9 @@ tokenizer = AutoTokenizer.from_pretrained(path, use_fast=False)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
-
-svd_scale = get_svd_scale(model, tokenizer, "Mixtral-8x7B-v0.1", max_samples=1000, selected_layers=)
-torch.save(svd_scale, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/SVD_scale_Mixtral_{}.pt")
+selected_layers = [0,1,2,3,4,5,6]
+svd_scale = get_svd_scale(model, tokenizer, "Mixtral-8x7B-v0.1", max_samples=1000, selected_layers=selected_layers)
+torch.save(svd_scale, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/SVD_scale_Mixtral_{selected_layers}.pt")
 # ppl_eval_sharing(model, tokenizer, experiment_name="SmolLlamix-8x101M", datasets=['wikitext2'], params_only=False)
 
 # expert_outputs = calculate_expert_outputs(

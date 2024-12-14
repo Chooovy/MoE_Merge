@@ -160,7 +160,7 @@ def get_svd_scale(model, tokenizer, model_name, dataset_name = 'wikitext', split
     if selected_layers is None:
         selected_layers = list(range(len(layers)))
     else:
-        selected_layers = [int(layer) for layer in selected_layers.split(',')]
+        selected_layers = selected_layers
     
 
     dtype = next(iter(model.parameters())).dtype

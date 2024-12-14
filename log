@@ -16,16 +16,8 @@ Total number of parameters: 7.24B
 Number of trainable parameters: 7.24B
 Number of non-trainable parameters: 0.00B
 
-≤Ó≤ª∂‡
-PPL after evaluation: {'wikitext2': 799.788330078125}
-Average Allocated Memory: 100643.77 MiB
-Average Reserved Memory: 124716.00 MiB
-Total number of parameters: 46.70B
-Number of trainable parameters: 46.70B
-Number of non-trainable parameters: 0.00B
 
 ratio=1.0
-Experiment: SmolLlamix-8x101M_ratio-1
 PPL after evaluation: {'wikitext2': 4.567188739776611}
 Average Allocated Memory: 100649.59 MiB
 Average Reserved Memory: 119863.64 MiB
@@ -42,15 +34,105 @@ Total number of parameters: 46.70B
 Number of trainable parameters: 46.70B
 Number of non-trainable parameters: 0.00B
 
+shareU 0.5
+Experiment: Mixtral-8x7B-v0.1-delta-0.5-share-1
+PPL after evaluation: {'wikitext2': 20.796749114990234}
+Average Allocated Memory: 46148.97 MiB
+Average Reserved Memory: 202342.18 MiB
+Total number of parameters: 29.78B
+Number of trainable parameters: 29.78B
+Number of non-trainable parameters: 0.00B
+
+shareV 0.5
+Experiment: Mixtral-8x7B-v0.1-delta-0.5-share-1
+PPL after evaluation: {'wikitext2': 21.802478790283203}
+Average Allocated Memory: 139129.65 MiB
+Average Reserved Memory: 202582.18 MiB
+Total number of parameters: 29.78B
+Number of trainable parameters: 29.78B
+Number of non-trainable parameters: 0.00B
+
+shareV 1
+Experiment: Mixtral-8x7B-v0.1-delta-1-share-1
+PPL after evaluation: {'wikitext2': 8.259197235107422}
+Average Allocated Memory: 166812.90 MiB
+Average Reserved Memory: 229638.18 MiB
+Total number of parameters: 52.33B
+Number of trainable parameters: 52.33B
+Number of non-trainable parameters: 0.00B
 
 ratio=0.1
-Experiment: SmolLlamix-8x101M_ratio-0.1
 PPL after evaluation: {'wikitext2': 29.03373146057129}
 Average Allocated Memory: 100649.59 MiB
 Average Reserved Memory: 120983.64 MiB
 Total number of parameters: 46.70B
 Number of trainable parameters: 46.70B
 Number of non-trainable parameters: 0.00B
+
+
+mean average
+/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B_0.25_svd_delta_merged.pt
+Experiment: Mixtral-8x7B-ratio-0.25
+PPL after evaluation: {'wikitext2': 12.589655876159668}
+Average Allocated Memory: 46894.76 MiB
+Average Reserved Memory: 116025.82 MiB
+Total number of parameters: 18.51B
+Number of trainable parameters: 18.51B
+Number of non-trainable parameters: 0.00B
+18.51B/46.70B = 0.39 --- 60% cut
+
+
+freq average
+Experiment: Mixtral-8x7B-v0.1-delta-0.25-share-1
+PPL after evaluation: {'wikitext2': 11.93613052368164}
+Average Allocated Memory: 132966.15 MiB
+Average Reserved Memory: 165070.91 MiB
+Total number of parameters: 18.51B
+Number of trainable parameters: 18.51B
+Number of non-trainable parameters: 0.00B
+
+
+mean average
+/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B_0.5_svd_delta_merged.pt
+Experiment: Mixtral-8x7B-ratio-0.5
+PPL after evaluation: {'wikitext2': 6.85538911819458}
+Average Allocated Memory: 68415.59 MiB
+Average Reserved Memory: 99301.82 MiB
+Total number of parameters: 29.78B
+Number of trainable parameters: 29.78B
+Number of non-trainable parameters: 0.00B
+29.78B/46.70B = 0.63 --- 40% cut
+
+
+freq average
+Experiment: Mixtral-8x7B-v0.1-delta-0.5-share-1
+PPL after evaluation: {'wikitext2': 6.766188621520996}
+Average Allocated Memory: 154477.48 MiB
+Average Reserved Memory: 185893.09 MiB
+Total number of parameters: 29.78B
+Number of trainable parameters: 29.78B
+Number of non-trainable parameters: 0.00B
+
+
+Baseline
+svd mean weight no scale
+28min
+Experiment: Mixtral-8x7B-v0.1-delta-1-share-1
+PPL after evaluation: {'wikitext2': 5.117525577545166}
+Average Allocated Memory: 122283.23 MiB
+Average Reserved Memory: 235066.00 MiB
+Total number of parameters: 52.33B
+Number of trainable parameters: 52.33B
+Number of non-trainable parameters: 0.00B
+
+
+
+
+
+
+
+
+
 ----------------------------------------------------------------
 
 SmolLlamix-8x101M
@@ -73,7 +155,7 @@ Total number of parameters: 0.10B
 Number of trainable parameters: 0.10B
 Number of non-trainable parameters: 0.00B
 
-≤Ó≤ª∂‡
+Â∑Æ‰∏çÂ§ö
 Experiment: SmolLlamix-8x101M
 PPL after evaluation: {'wikitext2': 36.355106353759766}
 Average Allocated Memory: 8128.93 MiB
