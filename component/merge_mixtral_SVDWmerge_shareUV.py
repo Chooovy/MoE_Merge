@@ -13,9 +13,14 @@ import random
 from .model_utils import find_layers, find_linear_layers
 from .data_utils import get_loaders
 
+def save_model(model, path):
+    """Saves the model to the specified path."""
+    torch.save(model.state_dict(), path)
+    print(f"Model saved to {path}")
+
 def cal_scale_inv(svd_scale):
     try:
-        scale_inv = torch.linalg.inv(svd_scale)
+        scale_inv = torch.linalg.inv(svd_scale.to(torch.float32))
     except Exception as e:
         print("Warning: svd_scale is not full rank!")
         svd_scale += 1e-6 * torch.eye(svd_scale.shape[0]).to(svd_scale.device)
@@ -570,14 +575,14 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
             svd_u = torch.matmul(truc_u, sqrtSigma)
             svd_v = torch.matmul(sqrtSigma, truc_v)
         else:
-            W_scale = torch.matmul(W, svd_scale.bfloat16())
+            W_scale = torch.matmul(W, svd_scale.bfloat16().to(W.device))
             U, S, VT = torch.linalg.svd(W_scale.float(), full_matrices=False)
             del W_scale
             truc_s = S[:num_s_after_trunc]
             del S
             truc_u = U[:, :num_s_after_trunc]
             del U
-            truc_v = torch.matmul(VT[:num_s_after_trunc, :], cal_scale_inv(svd_scale))
+            truc_v = torch.matmul(VT[:num_s_after_trunc, :], cal_scale_inv(svd_scale).to(W.device))
             del VT
             truc_sigma = torch.diag(truc_s)
             del truc_s

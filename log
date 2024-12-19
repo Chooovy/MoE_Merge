@@ -189,3 +189,78 @@ Average Reserved Memory: 20620.91 MiB
 Total number of parameters: 0.40B
 Number of trainable parameters: 0.40B
 Number of non-trainable parameters: 0.00B
+
+---------------------------------------------------------------
+shareV not shareU
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-1
+PPL after evaluation: {'wikitext2': 6.888123512268066}
+Average Allocated Memory: 139061.36 MiB
+Average Reserved Memory: 248370.18 MiB
+Number of non-zero parameters: 21.74B
+Compression ratio: 0.53%
+Save ratio: 0.47%
+
+shareV ,shareU-use average U
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-1
+PPL after evaluation: {'wikitext2': 139.15591430664062}
+Average Allocated Memory: 139061.36 MiB
+Average Reserved Memory: 248370.18 MiB
+Number of non-zero parameters: 10.06B
+Compression ratio: 0.78%
+Save ratio: 0.22%
+
+shareV ,shareU-use single U
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-1
+PPL after evaluation: {'wikitext2': 1864.86669921875}
+Average Allocated Memory: 116774.23 MiB
+Average Reserved Memory: 221058.18 MiB
+Number of non-zero parameters: 9.95B
+Compression ratio: 0.79%
+Save ratio: 0.21%
+
+shareV sparse-0.2
+Experiment: Mixtral-8x7B-delta-0.5-share-1
+PPL after evaluation: {'wikitext2': 9.455763816833496}
+Average Allocated Memory: 53294.47 MiB
+Average Reserved Memory: 90002.18 MiB
+Number of non-zero parameters: 18.92B
+Compression ratio: 0.59%
+Save ratio: 0.41%
+
+no shareV no shareU
+Experiment: Mixtral-8x7B-delta-0.5-share-1
+PPL after evaluation: {'wikitext2': 5.073697090148926}
+Average Allocated Memory: 154395.69 MiB
+Average Reserved Memory: 195772.00 MiB
+Number of non-zero parameters: 29.77B
+Compression ratio: 0.36%
+Save ratio: 0.64%
+
+no shareV no shareU sparse-0.2
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-0.2
+PPL after evaluation: {'wikitext2': 5.973724842071533}
+Average Allocated Memory: 68379.69 MiB
+Average Reserved Memory: 109483.09 MiB
+Number of non-zero parameters: 26.95B
+Compression ratio: 0.42%
+Save ratio: 0.58%
+---------------------------------------------------------------
+(svd-moe) root@C.14144282:/workspace/guhao_workspace/MoE_Merge$ python SVDWmerge_shareUV.py                                                                      
+对meanW作SVD就是不好                                                                                                                                                           
+Experiment: Mixtral-8x7B-delta-0.5-share-0.5-sparsity-1                                                                                                          
+PPL after evaluation: {'wikitext2': 15.853096008300781}                                                                                                          
+Average Allocated Memory: 47680.09 MiB                                                                                                                           
+Average Reserved Memory: 252464.00 MiB                                                                                                                           
+Number of non-zero parameters: 18.92B                                                                                                                            
+Compression ratio: 0.59%                                                                                                                                         
+Save ratio: 0.41%                                                                                                                                                
+                                                                                                                                                                 
+(svd-moe) root@C.14144282:/workspace/guhao_workspace/MoE_Merge$ python SVDWmerge_shareUV.py                                                                      
+                                                                                                                                               
+Experiment: Mixtral-8x7B-delta-0.5-share-0.8-sparsity-1                                                                                                          
+PPL after evaluation: {'wikitext2': 10.653851509094238}                                                                                                          
+Average Allocated Memory: 50894.73 MiB                                                                                                                           
+Average Reserved Memory: 260226.91 MiB                                                                                                                           
+Number of non-zero parameters: 20.61B                                                                                                                            
+Compression ratio: 0.56%                                                                                                                                         
+Save ratio: 0.44% 

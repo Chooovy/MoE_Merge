@@ -9,7 +9,7 @@ from functools import partial
 from component.merge_mixtral_SVDWmerge_shareUV import *
 from component.evaluater import ppl_eval_sharing
 
-path = "/aifs4su/gov/models/Mixtral-8x7B-v0.1/"  # 8 experts
+path = "/workspace/SVD-MOE-new/models_Mixtral"  # 8 experts
 # path = "/aifs4su/lilujun/SVD-MoE-merge/SmolLlamix-8x101M"
 # path = "/aifs4su/gov/models/Llama-2-7b-chat-hf/"
 
@@ -56,7 +56,7 @@ if tokenizer.pad_token is None:
 # with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/SmolLlamix-8x101M_expert_frequencies.json', 'w') as f:
 #     json.dump(expert_freq, f)
 
-with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/Mixtral_wikitext_20000_expert_frequencies.json', 'r') as f:
+with open('/workspace/guhao_workspace/MoE_Merge/cache/Mixtral_wikitext_20000_expert_frequencies.json', 'r') as f:
     expert_freq = json.load(f)
 
 # with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/SmolLlamix_wikitext_5000_expert_frequencies.json', 'r') as f:
@@ -65,15 +65,20 @@ with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/Mixtral_wikitext_20000_exper
 # svd_scale_path = "/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/SVD_scale_SmolLlamix.pt"
 # svd_scale = torch.load(svd_scale_path)
 
+svd_scale_path = "/workspace/guhao_workspace/MoE_Merge/cache/SVD_scale_Mixtral.pt"
+svd_scale = torch.load(svd_scale_path, map_location='cpu')
+
 # with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/SmolLlamix-8x101M_expert_mean_freq.json', 'r') as f:
 #     expert_freq = json.load(f)
 
-delta_ratio = 0.8
-share_ratio = 0.5 
+delta_ratio = 0.5
+share_ratio = 0.8 
+share_V = True
+share_U = False
 
 for i in tqdm(range(len(model.model.layers)), desc="Merging layers"):
     Merge_MoE_Block = Merge_MixtralSparseMoeBlock(model.model.layers[i].block_sparse_moe.config, share_ratio=share_ratio, delta_ratio=delta_ratio, expert_freq=expert_freq[str(i)]).to(get_free_gpu())
-    Merge_MoE_Block.merge_experts(model.model.layers[i].block_sparse_moe, svd_scale=None, share_V=False, share_U=False)
+    Merge_MoE_Block.merge_experts(model.model.layers[i].block_sparse_moe, svd_scale=svd_scale[i], share_V=share_V, share_U=share_U)
     model.model.layers[i].block_sparse_moe = Merge_MoE_Block
 
 # for i in tqdm([2], desc="sharing layers"):
@@ -92,7 +97,9 @@ for i in tqdm(range(len(model.model.layers)), desc="Merging layers"):
 #     model.model.layers[i+1].block_sparse_moe.shared_v3.weight = reference_v3
 
 
-sparsity_ratio = 0.6
+save_model(model, f"/workspace/guhao_workspace/MoE_Merge/Mixtral-8x7B-SVDWmerge-shareUV-delta-{delta_ratio}-share-{share_ratio}-share_V-{share_V}-share_U-{share_U}.pt")
+
+sparsity_ratio = 1
 # prune_wanda(model, tokenizer, nsamples=1000, seed=42, seqlen=2048, sparsity_ratio=sparsity_ratio, use_variant=True, use_rescale=False)
 
 ppl_eval_sharing(model, tokenizer, experiment_name=f"Mixtral-8x7B-delta-{delta_ratio}-share-{share_ratio}-sparsity-{sparsity_ratio}", datasets=['wikitext2'], params_only=False)

@@ -18,10 +18,59 @@ def save_model(model, path):
     torch.save(model.state_dict(), path)
     print(f"Model saved to {path}")
 
+def linear_cka(Linear1, Linear2):
+    # 将两个权重矩阵移到同一个设备上
+    device = Linear1.weight.device
+    W1 = Linear1.weight.data.to(device)
+    W2 = Linear2.weight.data.to(device)
+    
+    # 中心化
+    def center_kernel(K):
+        n = K.size(0)
+        one_n = (torch.ones(n, n, dtype=torch.bfloat16) / n).to(device)
+        return K - one_n @ K - K @ one_n + one_n @ K @ one_n
+
+    # 计算Gram矩阵
+    K = W1 @ W1.T
+    L = W2 @ W2.T
+
+    # 中心化Gram矩阵
+    Kc = center_kernel(K)
+    Lc = center_kernel(L)
+
+    # 计算CKA
+    numerator = torch.trace(Kc @ Lc)
+    denominator = torch.sqrt(torch.trace(Kc @ Kc) * torch.trace(Lc @ Lc))
+    cka_score = numerator / denominator
+    print(f"CKA between linear1 and linear2: {cka_score.item():.4f}")
+    return cka_score.item()
+
+
+def weight_cka(W1: torch.Tensor, W2: torch.Tensor) -> float:
+    # 中心化
+    def center_kernel(K):
+        n = K.size(0)
+        one_n = (torch.ones(n, n, dtype=torch.bfloat16) / n).to(K.device)
+        return K - one_n @ K - K @ one_n + one_n @ K @ one_n
+
+    # 计算Gram矩阵
+    K = W1 @ W1.T
+    L = W2 @ W2.T
+
+    # 中心化Gram矩阵
+    Kc = center_kernel(K)
+    Lc = center_kernel(L)
+
+    # 计算CKA
+    numerator = torch.trace(Kc @ Lc)
+    denominator = torch.sqrt(torch.trace(Kc @ Kc) * torch.trace(Lc @ Lc))
+    cka_score = numerator / denominator
+    print(f"CKA between linear1 and linear2: {cka_score.item():.4f}")
+
 
 def cal_scale_inv(svd_scale):
     try:
-        scale_inv = torch.linalg.inv(svd_scale)
+        scale_inv = torch.linalg.inv(svd_scale.to(torch.float32))
     except Exception as e:
         print("Warning: svd_scale is not full rank!")
         svd_scale += 1e-6 * torch.eye(svd_scale.shape[0]).to(svd_scale.device)
@@ -155,7 +204,7 @@ def get_svd_scale(model, tokenizer, model_name, dataset_name = 'wikitext', split
     # torch.save(calib_loader, cache_file)
 
     # calib_loader = torch.load("/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/calib_loader_SmolLlamix-8x101M_wikitext_1000.pt")
-    calib_loader = torch.load("/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/calib_loader_Mixtral-8x7B-v0.1_wikitext_256.pt")
+    calib_loader = torch.load("/workspace/guhao_workspace/MoE_Merge/cache/calib_loader_Mixtral-8x7B-v0.1_wikitext_256.pt")
 
     if selected_layers is None:
         selected_layers = list(range(len(layers)))
@@ -178,9 +227,9 @@ def get_svd_scale(model, tokenizer, model_name, dataset_name = 'wikitext', split
             inps[cache['i']] = inp.detach()
             cache['i'] += 1
             if cache['attention_mask'] is None:
-                cache['attention_mask'] = kwargs['attention_mask'].detach()
+                cache['attention_mask'] = kwargs['attention_mask']
                 if "opt" not in model_name:
-                    cache['position_ids'] = kwargs['position_ids'].detach()
+                    cache['position_ids'] = kwargs['position_ids']
             else:
                 cache['attention_mask'] = torch.cat((cache['attention_mask'], kwargs['attention_mask'].detach()), dim=0)
                 if "opt" not in model_name:
@@ -207,12 +256,12 @@ def get_svd_scale(model, tokenizer, model_name, dataset_name = 'wikitext', split
     profiling_mat = {}
     for i in tqdm(range(len(layers))):
         layer_profile = {}
+        process_subset = {}
         layer = layers[i]
         # subset = find_layers(module = layer, layers=[nn.Linear, MixtralSparseMoeBlock], process_moe_block=True) 
         if i in selected_layers:
             subset = find_linear_layers(module = layer, layers=[nn.Linear])
 
-            process_subset = {}
             for name, module in subset.items():
                 if 'experts' in name:
                     process_subset[name] = module
@@ -234,7 +283,10 @@ def get_svd_scale(model, tokenizer, model_name, dataset_name = 'wikitext', split
             handles.append(process_subset[name].register_forward_hook(hook))
 
         for j in range(inps.shape[0]):
-            outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_masks[j].unsqueeze(0).to(device))[0]
+            if attention_masks is not None:
+                outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_masks[j].unsqueeze(0).to(device))[0]
+            else:
+                outs[j] = layer(inps[j].unsqueeze(0))[0]
         for h in handles:
             h.remove()
         torch.cuda.empty_cache()
@@ -351,14 +403,15 @@ def return_given_alpha(alpha, sort_res, W_metric, tmp_metric, sum_before):
 
 
 
-def prune_wanda(model, tokenizer, device=None, prune_n=0, prune_m=0, nsamples=128, seed=0, seqlen=2048, use_variant = False, sparsity_ratio = 0.5, use_rescale = False):
+def prune_wanda(model, tokenizer, device=None, prune_n=0, prune_m=0, nsamples=128, seed=0, seqlen=2048, 
+                use_variant = False, sparsity_ratio = 0.5, use_rescale = False, prune_layer_name = "Wmean"):
     use_cache = model.config.use_cache 
     model.config.use_cache = False 
 
     print("loading calibdation data")
-    # dataloader, _ = get_loaders("wikitext2", nsamples=nsamples, seed=seed, seqlen=seqlen, tokenizer=tokenizer)
-    # torch.save(dataloader, "/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/dataloader_wikitext2_128.pt")
-    dataloader = torch.load("/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/dataloader_wikitext2_128.pt")
+    dataloader, _ = get_loaders("wikitext2", nsamples=nsamples, seed=seed, seqlen=seqlen, tokenizer=tokenizer)
+    torch.save(dataloader, "/workspace/guhao_workspace/MoE_Merge/cache/dataloader_wikitext2_128.pt")
+    # dataloader = torch.load("/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/dataloader_wikitext2_128.pt")
     print("dataset loading complete")
     device = get_free_gpu()
     with torch.no_grad():
@@ -372,12 +425,15 @@ def prune_wanda(model, tokenizer, device=None, prune_n=0, prune_m=0, nsamples=12
 
         process_subset = {}
         for name, module in subset.items():
-            if 'Wmean' in name:
+            if prune_layer_name in name:
                 process_subset[name] = module
 
         if f"model.layers.{i}" in model.hf_device_map:   ## handle the case for llama-30B and llama-65B, when the device map has multiple GPUs;
             dev = model.hf_device_map[f"model.layers.{i}"]
-            inps, outs, attention_mask, position_ids = inps.to(dev), outs.to(dev), attention_mask.to(dev), position_ids.to(dev)
+            if attention_mask is not None and position_ids is not None:
+                inps, outs, attention_mask, position_ids = inps.to(dev), outs.to(dev), attention_mask.to(dev), position_ids.to(dev)
+            else:
+                inps, outs = inps.to(dev), outs.to(dev)
 
         wrapped_layers = {}
         for name in process_subset:
@@ -470,7 +526,7 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
     and memory on padding.
     """
 
-    def __init__(self, config, share_ratio, delta_ratio, expert_freq):
+    def __init__(self, config, share_ratio, delta_ratio, expert_freq, delta_share_V=False, delta_share_U=False):
         super().__init__()
         self.hidden_dim = config.hidden_size
         self.ffn_dim = config.intermediate_size
@@ -485,6 +541,9 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
         self.expert_freq = expert_freq
         self.config = config
 
+        self.delta_share_V = delta_share_V
+        self.delta_share_U = delta_share_U
+
         # gating
         self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False, dtype=torch.bfloat16)
         
@@ -496,9 +555,34 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
         nn.init.zeros_(self.Wmean2.weight)
         nn.init.zeros_(self.Wmean3.weight)
 
-        self.experts = nn.ModuleList([meanW_deltaUV(config, self.Wmean1, self.Wmean2, self.Wmean3, 
-                                                self.delta_ratio)  
-                                                for _ in range(self.num_experts)])
+        if self.delta_share_V == False and self.delta_share_U == False:
+            self.experts = nn.ModuleList([meanW_deltaUV(config, self.Wmean1, self.Wmean2, self.Wmean3, 
+                                                    self.delta_ratio, delta_share_V=False, delta_share_U=False)  for _ in range(self.num_experts)])
+            
+        elif self.delta_share_V == True and self.delta_share_U == False:
+            delta_low_rank = int(self.intermediate_dim * self.hidden_dim * self.delta_ratio / (self.intermediate_dim + self.hidden_dim))
+            self.experts_delta_v1_shared = nn.Linear(self.hidden_dim, delta_low_rank, bias=False, dtype=torch.bfloat16)
+            self.experts_delta_v2_shared = nn.Linear(self.intermediate_dim, delta_low_rank, bias=False, dtype=torch.bfloat16)
+            self.experts_delta_v3_shared = nn.Linear(self.hidden_dim, delta_low_rank, bias=False, dtype=torch.bfloat16)
+
+            self.experts = nn.ModuleList([meanW_deltaUV(config, self.Wmean1, self.Wmean2, self.Wmean3, 
+                                                    self.delta_ratio, delta_share_V=True, delta_share_U=False, 
+                                                    experts_delta_v1_shared=self.experts_delta_v1_shared, 
+                                                    experts_delta_v2_shared=self.experts_delta_v2_shared, experts_delta_v3_shared=self.experts_delta_v3_shared)  for _ in range(self.num_experts)])
+            
+        elif self.delta_share_V == True and self.delta_share_U == True:
+            delta_low_rank = int(self.intermediate_dim * self.hidden_dim * self.delta_ratio / (self.intermediate_dim + self.hidden_dim))
+            self.experts_delta_u1_shared = nn.Linear(delta_low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
+            self.experts_delta_v1_shared = nn.Linear(self.hidden_dim, delta_low_rank, bias=False, dtype=torch.bfloat16)
+            self.experts_delta_u2_shared = nn.Linear(delta_low_rank, self.hidden_dim, bias=False, dtype=torch.bfloat16)
+            self.experts_delta_v2_shared = nn.Linear(self.intermediate_dim, delta_low_rank, bias=False, dtype=torch.bfloat16)
+            self.experts_delta_u3_shared = nn.Linear(delta_low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
+            self.experts_delta_v3_shared = nn.Linear(self.hidden_dim, delta_low_rank, bias=False, dtype=torch.bfloat16)
+
+            self.experts = nn.ModuleList([meanW_deltaUV(config, self.Wmean1, self.Wmean2, self.Wmean3, 
+                                                    self.delta_ratio, delta_share_V=True, delta_share_U=True, experts_delta_u1_shared=self.experts_delta_u1_shared, experts_delta_v1_shared=self.experts_delta_v1_shared, 
+                                                    experts_delta_u2_shared=self.experts_delta_u2_shared, experts_delta_v2_shared=self.experts_delta_v2_shared, 
+                                                    experts_delta_u3_shared=self.experts_delta_u3_shared, experts_delta_v3_shared=self.experts_delta_v3_shared)  for _ in range(self.num_experts)])
 
         self.jitter_noise = config.router_jitter_noise
 
@@ -556,7 +640,7 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
 
     @staticmethod
     @torch.no_grad()
-    def svd_delta(W, ratio=1, svd_scale=None, rank=None):
+    def svd_delta(W, ratio=1, svd_scale=None, rank=None, absorb_u=True, absorb_v=False):
         if rank is None:
             num_s_after_trunc = int(W.shape[0] * W.shape[1] * ratio / (W.shape[0] + W.shape[1]))
         else:
@@ -593,20 +677,27 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
                 svd_u = torch.matmul(truc_u, sqrtSigma)
                 svd_v = torch.matmul(sqrtSigma, truc_v)
             else:
-                W_scale = torch.matmul(W, svd_scale.bfloat16())
+                W_scale = torch.matmul(W, svd_scale.bfloat16().to(W.device))
                 U, S, VT = torch.linalg.svd(W_scale.float(), full_matrices=False)
                 del W_scale
                 truc_s = S[:num_s_after_trunc]
                 del S
                 truc_u = U[:, :num_s_after_trunc]
                 del U
-                truc_v = torch.matmul(VT[:num_s_after_trunc, :], cal_scale_inv(svd_scale))
+                truc_v = torch.matmul(VT[:num_s_after_trunc, :], cal_scale_inv(svd_scale).to(W.device))
                 del VT
                 truc_sigma = torch.diag(truc_s)
                 del truc_s
-                sqrtSigma = torch.sqrt(truc_sigma)
-                svd_u = torch.matmul(truc_u, sqrtSigma)
-                svd_v = torch.matmul(sqrtSigma, truc_v)
+                if absorb_u:
+                    svd_u = torch.matmul(truc_u, truc_sigma)
+                    svd_v = truc_v
+                elif absorb_v:
+                    svd_u = truc_u
+                    svd_v = torch.matmul(truc_v, truc_sigma)
+                else:
+                    sqrtSigma = torch.sqrt(truc_sigma)
+                    svd_u = torch.matmul(truc_u, sqrtSigma)
+                    svd_v = torch.matmul(sqrtSigma, truc_v)
             
         return svd_u.to(torch.bfloat16), svd_v.to(torch.bfloat16)
 
@@ -644,9 +735,9 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
 
 
     @torch.no_grad()
-    def merge_experts(self, module, svd_scale = None, share_V=False, share_U=False):
+    def merge_experts(self, module, svd_scale = None):
         self.gate.weight.data = module.gate.weight.data
-
+        # svd_scale = svd_scale.to(get_free_gpu())
         expert_mean = {"w1_mean": None, "w2_mean": None, "w3_mean": None}
 
         total_weight = 0 
@@ -731,7 +822,7 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
         # print(f"w1_mean - svd result w1: {self.expert_mean['w1_mean'] - w1_mean}\n")
         # print(f"w2_mean - svd result w2: {self.expert_mean['w2_mean'] - w2_mean}\n")
         # print(f"w3_mean - svd result w3: {self.expert_mean['w3_mean'] - w3_mean}\n")
-        if share_V == True and share_U == False:
+        if self.delta_share_V == True and self.delta_share_U == False:
             delta_w1 = []
             delta_w2 = []
             delta_w3 = []
@@ -761,54 +852,58 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
 
             del delta_w1, delta_w2, delta_w3
 
+            self.experts_delta_v1_shared.weight = shared_v1
+            self.experts_delta_v2_shared.weight = shared_v2
+            self.experts_delta_v3_shared.weight = shared_v3
+
             for j in tqdm(range(self.num_experts), desc="Merging experts", leave=False):
 
                 self.experts[j].delta_u1.weight.data = delta_u1[j * self.experts[j].delta_u1.weight.shape[0]:(j + 1) * self.experts[j].delta_u1.weight.shape[0], :]
-                self.experts[j].delta_v1.weight = shared_v1
+                # self.experts[j].delta_v1.weight = shared_v1
                 self.experts[j].delta_u2.weight.data = delta_u2[j * self.experts[j].delta_u2.weight.shape[0]:(j + 1) * self.experts[j].delta_u2.weight.shape[0], :]
-                self.experts[j].delta_v2.weight = shared_v2
+                # self.experts[j].delta_v2.weight = shared_v2
                 self.experts[j].delta_u3.weight.data = delta_u3[j * self.experts[j].delta_u3.weight.shape[0]:(j + 1) * self.experts[j].delta_u3.weight.shape[0], :]
-                self.experts[j].delta_v3.weight = shared_v3
+                # self.experts[j].delta_v3.weight = shared_v3
 
-        if share_V == False and share_U == True:
-            delta_w1 = []
-            delta_w2 = []
-            delta_w3 = []
+        # if self.delta_share_V == False and self.delta_share_U == True:
+        #     delta_w1 = []
+        #     delta_w2 = []
+        #     delta_w3 = []
 
-            for j in range(self.num_experts):                
-                delta_w1.append(module.experts[j].w1.weight - expert_mean["w1_mean"])
-                delta_w2.append(module.experts[j].w2.weight - expert_mean["w2_mean"])
-                delta_w3.append(module.experts[j].w3.weight - expert_mean["w3_mean"])
+        #     for j in range(self.num_experts):                
+        #         delta_w1.append(module.experts[j].w1.weight - expert_mean["w1_mean"])
+        #         delta_w2.append(module.experts[j].w2.weight - expert_mean["w2_mean"])
+        #         delta_w3.append(module.experts[j].w3.weight - expert_mean["w3_mean"])
 
-            delta_w1 = torch.stack(delta_w1, dim=1).reshape(delta_w1[0].shape[0], -1)
-            delta_w2 = torch.stack(delta_w2, dim=1).reshape(delta_w2[0].shape[0], -1) 
-            delta_w3 = torch.stack(delta_w3, dim=1).reshape(delta_w3[0].shape[0], -1)
+        #     delta_w1 = torch.stack(delta_w1, dim=1).reshape(delta_w1[0].shape[0], -1)
+        #     delta_w2 = torch.stack(delta_w2, dim=1).reshape(delta_w2[0].shape[0], -1) 
+        #     delta_w3 = torch.stack(delta_w3, dim=1).reshape(delta_w3[0].shape[0], -1)
 
-            if svd_scale is None:
-                shared_u1, delta_v1 = self.svd_delta(delta_w1, rank=self.experts[0].delta_low_rank)
-                shared_u2, delta_v2 = self.svd_delta(delta_w2, rank=self.experts[0].delta_low_rank)
-                shared_u3, delta_v3 = self.svd_delta(delta_w3, rank=self.experts[0].delta_low_rank)
-            else:
-                shared_u1, delta_v1 = self.svd_delta(delta_w1, rank=self.experts[0].delta_low_rank, svd_scale=scale_w1_mean)
-                shared_u2, delta_v2 = self.svd_delta(delta_w2, rank=self.experts[0].delta_low_rank, svd_scale=scale_w2_mean)
-                shared_u3, delta_v3 = self.svd_delta(delta_w3, rank=self.experts[0].delta_low_rank, svd_scale=scale_w3_mean)
+        #     if svd_scale is None:
+        #         shared_u1, delta_v1 = self.svd_delta(delta_w1, rank=self.experts[0].delta_low_rank)
+        #         shared_u2, delta_v2 = self.svd_delta(delta_w2, rank=self.experts[0].delta_low_rank)
+        #         shared_u3, delta_v3 = self.svd_delta(delta_w3, rank=self.experts[0].delta_low_rank)
+        #     else:
+        #         shared_u1, delta_v1 = self.svd_delta(delta_w1, rank=self.experts[0].delta_low_rank, svd_scale=scale_w1_mean)
+        #         shared_u2, delta_v2 = self.svd_delta(delta_w2, rank=self.experts[0].delta_low_rank, svd_scale=scale_w2_mean)
+        #         shared_u3, delta_v3 = self.svd_delta(delta_w3, rank=self.experts[0].delta_low_rank, svd_scale=scale_w3_mean)
 
-            shared_u1 = nn.Parameter(shared_u1)
-            shared_u2 = nn.Parameter(shared_u2)
-            shared_u3 = nn.Parameter(shared_u3)
+        #     shared_u1 = nn.Parameter(shared_u1)
+        #     shared_u2 = nn.Parameter(shared_u2)
+        #     shared_u3 = nn.Parameter(shared_u3)
 
-            for j in tqdm(range(self.num_experts), desc="Merging experts", leave=False):
+        #     for j in tqdm(range(self.num_experts), desc="Merging experts", leave=False):
 
-                self.experts[j].delta_u1.weight = shared_u1
-                self.experts[j].delta_v1.weight.data = delta_v1[:, j * self.experts[j].delta_v1.weight.shape[1]:(j + 1) * self.experts[j].delta_v1.weight.shape[1]]
-                self.experts[j].delta_u2.weight = shared_u2
-                self.experts[j].delta_v2.weight.data = delta_v2[:, j * self.experts[j].delta_v2.weight.shape[1]:(j + 1) * self.experts[j].delta_v2.weight.shape[1]]
-                self.experts[j].delta_u3.weight = shared_u3
-                self.experts[j].delta_v3.weight.data = delta_v3[:, j * self.experts[j].delta_v3.weight.shape[1]:(j + 1) * self.experts[j].delta_v3.weight.shape[1]]
+        #         self.experts[j].delta_u1.weight = shared_u1
+        #         self.experts[j].delta_v1.weight.data = delta_v1[:, j * self.experts[j].delta_v1.weight.shape[1]:(j + 1) * self.experts[j].delta_v1.weight.shape[1]]
+        #         self.experts[j].delta_u2.weight = shared_u2
+        #         self.experts[j].delta_v2.weight.data = delta_v2[:, j * self.experts[j].delta_v2.weight.shape[1]:(j + 1) * self.experts[j].delta_v2.weight.shape[1]]
+        #         self.experts[j].delta_u3.weight = shared_u3
+        #         self.experts[j].delta_v3.weight.data = delta_v3[:, j * self.experts[j].delta_v3.weight.shape[1]:(j + 1) * self.experts[j].delta_v3.weight.shape[1]]
 
 
 
-        if share_V == True and share_U == True:
+        if self.delta_share_V == True and self.delta_share_U == True:
             delta_w1 = []
             delta_w2 = []
             delta_w3 = []
@@ -835,9 +930,13 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
             shared_v2 = nn.Parameter(shared_v2)
             shared_v3 = nn.Parameter(shared_v3)
 
-            shared_u1  = None
-            shared_u2  = None
-            shared_u3  = None
+            # j = 0
+            # shared_u1  = delta_u1[j * self.experts[j].delta_u1.weight.shape[0]:(j + 1) * self.experts[j].delta_u1.weight.shape[0], :]
+            # shared_u2  = delta_u2[j * self.experts[j].delta_u2.weight.shape[0]:(j + 1) * self.experts[j].delta_u2.weight.shape[0], :]
+            # shared_u3  = delta_u3[j * self.experts[j].delta_u3.weight.shape[0]:(j + 1) * self.experts[j].delta_u3.weight.shape[0], :]
+            shared_u1 = None
+            shared_u2 = None
+            shared_u3 = None
             total_freq = 0
             for j in range(self.num_experts):
                 freq = self.expert_freq[j]
@@ -862,16 +961,23 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
             shared_u2 = nn.Parameter(shared_u2)
             shared_u3 = nn.Parameter(shared_u3)
 
-            for j in tqdm(range(self.num_experts), desc="Merging experts", leave=False):
+            self.experts_delta_u1_shared.weight = shared_u1
+            self.experts_delta_v1_shared.weight = shared_v1
+            self.experts_delta_u2_shared.weight = shared_u2
+            self.experts_delta_v2_shared.weight = shared_v2
+            self.experts_delta_u3_shared.weight = shared_u3
+            self.experts_delta_v3_shared.weight = shared_v3
 
-                self.experts[j].delta_u1.weight = shared_u1
-                self.experts[j].delta_v1.weight = shared_v1
-                self.experts[j].delta_u2.weight = shared_u2
-                self.experts[j].delta_v2.weight = shared_v2
-                self.experts[j].delta_u3.weight = shared_u3
-                self.experts[j].delta_v3.weight = shared_v3
+            # for j in tqdm(range(self.num_experts), desc="Merging experts", leave=False):
 
-        if share_V == False and share_U == False:
+            #     self.experts[j].delta_u1.weight = shared_u1
+            #     self.experts[j].delta_v1.weight = shared_v1
+            #     self.experts[j].delta_u2.weight = shared_u2
+            #     self.experts[j].delta_v2.weight = shared_v2
+            #     self.experts[j].delta_u3.weight = shared_u3
+            #     self.experts[j].delta_v3.weight = shared_v3
+
+        if self.delta_share_V == False and self.delta_share_U == False:
             for j in tqdm(range(self.num_experts), desc="Merging experts", leave=False):
                 delta_w1 = (module.experts[j].w1.weight - self.Wmean1.weight)
                 delta_w2 = (module.experts[j].w2.weight - self.Wmean2.weight)
@@ -886,7 +992,8 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
                     self.experts[j].delta_u1.weight.data, self.experts[j].delta_v1.weight.data = self.svd_delta(delta_w1, ratio=self.delta_ratio)
                     self.experts[j].delta_u2.weight.data, self.experts[j].delta_v2.weight.data = self.svd_delta(delta_w2, ratio=self.delta_ratio)
                     self.experts[j].delta_u3.weight.data, self.experts[j].delta_v3.weight.data = self.svd_delta(delta_w3, ratio=self.delta_ratio)
-
+        
+        del svd_scale
 
 
 
@@ -993,7 +1100,10 @@ class share_svd_expert_with_delta_weight(nn.Module):
 
 
 class meanW_deltaUV(nn.Module):
-    def __init__(self, config: MixtralConfig, Wmean1, Wmean2, Wmean3, delta_ratio=1):
+    def __init__(self, config: MixtralConfig, Wmean1, Wmean2, Wmean3, delta_ratio=1, delta_share_V=False, delta_share_U=False, 
+                 experts_delta_u1_shared=None, experts_delta_v1_shared=None, 
+                 experts_delta_u2_shared=None, experts_delta_v2_shared=None, 
+                 experts_delta_u3_shared=None, experts_delta_v3_shared=None):
         super().__init__()
         self.intermediate_dim = config.intermediate_size
         self.hidden_dim = config.hidden_size
@@ -1006,18 +1116,33 @@ class meanW_deltaUV(nn.Module):
 
         self.act_fn = ACT2FN[config.hidden_act]
 
-        self.delta_ratio = delta_ratio
-        self.delta_low_rank = int(self.intermediate_dim * self.hidden_dim * self.delta_ratio / (self.intermediate_dim + self.hidden_dim))
+        if delta_share_V == False and delta_share_U == False:
+            self.delta_ratio = delta_ratio
+            self.delta_low_rank = int(self.intermediate_dim * self.hidden_dim * self.delta_ratio / (self.intermediate_dim + self.hidden_dim))
+            self.delta_u1 = nn.Linear(self.delta_low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
+            self.delta_v1 = nn.Linear(self.hidden_dim, self.delta_low_rank, bias=False, dtype=torch.bfloat16)
+            self.delta_u2 = nn.Linear(self.delta_low_rank, self.hidden_dim, bias=False, dtype=torch.bfloat16)
+            self.delta_v2 = nn.Linear(self.intermediate_dim, self.delta_low_rank, bias=False, dtype=torch.bfloat16)
+            self.delta_u3 = nn.Linear(self.delta_low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
+            self.delta_v3 = nn.Linear(self.hidden_dim, self.delta_low_rank, bias=False, dtype=torch.bfloat16)
 
-        self.delta_u1 = nn.Linear(self.delta_low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
-        self.delta_v1 = nn.Linear(self.hidden_dim, self.delta_low_rank, bias=False, dtype=torch.bfloat16)
-
-        self.delta_u2 = nn.Linear(self.delta_low_rank, self.hidden_dim, bias=False, dtype=torch.bfloat16)
-        self.delta_v2 = nn.Linear(self.intermediate_dim, self.delta_low_rank, bias=False, dtype=torch.bfloat16)
-
-        self.delta_u3 = nn.Linear(self.delta_low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
-        self.delta_v3 = nn.Linear(self.hidden_dim, self.delta_low_rank, bias=False, dtype=torch.bfloat16)
-
+        elif delta_share_V == True and delta_share_U == False:
+            self.delta_ratio = delta_ratio
+            self.delta_low_rank = int(self.intermediate_dim * self.hidden_dim * self.delta_ratio / (self.intermediate_dim + self.hidden_dim))
+            self.delta_u1 = nn.Linear(self.delta_low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
+            self.delta_v1 = experts_delta_v1_shared
+            self.delta_u2 = nn.Linear(self.delta_low_rank, self.hidden_dim, bias=False, dtype=torch.bfloat16)
+            self.delta_v2 = experts_delta_v2_shared
+            self.delta_u3 = nn.Linear(self.delta_low_rank, self.intermediate_dim, bias=False, dtype=torch.bfloat16)
+            self.delta_v3 = experts_delta_v3_shared
+        
+        elif delta_share_V == True and delta_share_U == True:
+            self.delta_u1 = experts_delta_u1_shared
+            self.delta_v1 = experts_delta_v1_shared
+            self.delta_u2 = experts_delta_u2_shared
+            self.delta_v2 = experts_delta_v2_shared
+            self.delta_u3 = experts_delta_u3_shared
+            self.delta_v3 = experts_delta_v3_shared
 
     def forward(self, hidden_states):
         # if self.sparse_w1 == None:
