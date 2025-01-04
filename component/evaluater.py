@@ -11,7 +11,7 @@ from datasets import load_dataset
 from accelerate import Accelerator
 import random
 from .data_utils import get_test_data
-
+from .model_utils import find_linear_layers
 current_path = os.path.dirname(os.path.abspath(__file__))
 parent_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(current_path)
@@ -111,6 +111,282 @@ def ppl_eval_sharing(model, tokenizer, experiment_name, datasets=['wikitext2', '
 
     print(result_str)
     # return result_str
+
+@torch.no_grad()
+def ppl_eval_sharing_with_activation(model, tokenizer, experiment_name, datasets=['wikitext2', 'ptb', 'c4'], model_seq_len=2048, batch_size=16, params_only=False):
+    seed = 42  # or any other integer
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    def _perplexity(nlls, n_samples, seqlen):
+        return torch.exp(torch.stack(nlls).sum() / (n_samples * seqlen))
+
+    model.eval()
+    ppls = {}
+    total_allocated_list = []
+    total_reserved_list = []
+    activation_counts = []
+
+    # 获取模型的主设备
+    main_device = next(model.parameters()).device
+
+    # Helper function to count activations
+    def count_activations(output):
+        if torch.is_tensor(output):
+            return output.numel()
+        elif isinstance(output, (list, tuple)):
+            return sum(count_activations(o) for o in output)
+        elif hasattr(output, '__dict__'):
+            return sum(count_activations(v) for v in output.__dict__.values())
+        else:
+            return 0
+
+    def hook(module, input, output):
+        if hasattr(module, 'weight'):
+            activations = count_activations(module.weight)
+            activation_counts.append(activations)
+
+
+    from contextlib import contextmanager
+    @contextmanager
+    def activation_counter(model):  # Reset activation counts at the start
+        hooks = []
+        subset = find_linear_layers(module=model, layers=[torch.nn.Linear])
+        for name in subset:
+            hooks.append(subset[name].register_forward_hook(hook))
+        try:
+            yield
+        finally:
+            for h in hooks:
+                h.remove()
+
+    with activation_counter(model):
+        if not params_only:
+            for dataset in datasets:
+                data = get_test_data(dataset, tokenizer, seq_len=model_seq_len, batch_size=batch_size)
+                seqlen = model_seq_len
+                n_samples = len(data)
+                nlls = []
+
+                with tqdm(range(n_samples), desc=f"Evaluating {dataset} - Perplexity") as progress_bar:
+                    for i in progress_bar:
+                        batch = next(iter(data)).to(main_device)
+                        # minimal_batch = torch.ones((1, 1), dtype=torch.long).to(main_device)  # [1, 2] represents batch_size=1, seq_len=2
+                        # batch = minimal_batch
+
+                        allocated, reserved = print_memory_usage()
+                        total_allocated_list.append(allocated)
+                        total_reserved_list.append(reserved)
+
+                        with torch.no_grad():
+                            output = model(batch)
+                            logits = output.logits if hasattr(output, "logits") else output[0]
+
+                        logits = logits.to(main_device)
+                        shift_logits = logits[:, :-1, :].contiguous().float()
+                        shift_labels = batch[:, 1:].contiguous()
+
+                        loss_fct = torch.nn.CrossEntropyLoss()
+                        loss = loss_fct(
+                            shift_logits.view(-1, shift_logits.size(-1)),
+                            shift_labels.view(-1)
+                        )
+                        neg_log_likelihood = loss.float() * seqlen
+                        nlls.append(neg_log_likelihood)
+
+                        curr_ppl = _perplexity(nlls, i + 1, seqlen)
+                        progress_bar.set_description(f"Evaluating {dataset} - Perplexity {curr_ppl:.3f}")
+
+                ppl = _perplexity(nlls, n_samples, seqlen)
+                ppls[dataset] = ppl.item()
+
+    # 在此处，activation_counts 包含了整个推理过程的激活计数
+    total_activations = sum(activation_counts)
+
+    # 计算参数统计
+    threshold = 1e-6
+    non_zero_params = sum((p.abs() > threshold).sum().item() for p in model.parameters())
+
+    print("\n")
+    result_str = f"Experiment: {experiment_name}\n"
+    if not params_only:
+        avg_allocated = sum(total_allocated_list) / len(total_allocated_list)
+        avg_reserved = sum(total_reserved_list) / len(total_reserved_list)
+        result_str += f"PPL after evaluation: {ppls}\n"
+        result_str += f"Average Allocated Memory: {avg_allocated:.2f} MiB\n"
+        result_str += f"Average Reserved Memory: {avg_reserved:.2f} MiB\n"
+
+    result_str += f"Number of non-zero parameters: {non_zero_params / 1e9:.2f}B\n"
+    result_str += f"Total activation parameters: {total_activations / 1e9:.2f}B\n"
+
+    if "Mixtral" in experiment_name:
+        org_params = 46.70e9
+        result_str += f"Compression ratio: {1 - (non_zero_params / org_params):.2f}%\n"
+        result_str += f"Save ratio: {non_zero_params / org_params:.2f}%\n"
+
+    elif "Llamix" in experiment_name:
+        org_params = 0.40e9
+        result_str += f"Compression ratio: {1 - (non_zero_params / org_params):.2f}%\n"
+        result_str += f"Save ratio: {non_zero_params / org_params:.2f}%\n"
+
+    result_str += f"Total activation parameters during inference: {total_activations / 1e9:.2f}B\n"
+    print(result_str)
+
+    
+def print_memory_usage():
+    total_gpus = torch.cuda.device_count()
+    total_allocated = 0
+    total_reserved = 0
+    
+    for i in range(total_gpus):
+        allocated = torch.cuda.memory_allocated(device=i) / 1024 / 1024
+        reserved = torch.cuda.memory_reserved(device=i) / 1024 / 1024
+        total_allocated += allocated
+        total_reserved += reserved
+        # print(f"GPU {i} - Allocated: {allocated:.2f} MiB, Reserved: {reserved:.2f} MiB")
+    
+    # print(f"Total - Allocated: {total_allocated:.2f} MiB, Reserved: {total_reserved:.2f} MiB")
+    
+    return total_allocated, total_reserved
+
+
+
+
+
+
+
+
+
+
+
+
+@torch.no_grad()
+def ppl_eval_sharing_activation(model, tokenizer, experiment_name, datasets=['wikitext2', 'ptb', 'c4'], model_seq_len=2048, batch_size=16, params_only=False):
+    import torch
+    import numpy as np
+    import random
+    from torch.utils.data import DataLoader, Dataset
+    from tqdm import tqdm
+
+    seed = 42  # or any other integer
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    def _perplexity(nlls, n_samples, seqlen):
+        return torch.exp(torch.stack(nlls).sum() / (n_samples * seqlen))
+
+    model.eval()
+    ppls = {}
+    total_allocated_list = []
+    total_reserved_list = []
+
+    # 获取模型的主设备
+    main_device = next(model.parameters()).device
+
+    # List to hold activation counts
+    activation_counts = []
+
+    # Helper function to count activations
+    def count_activations(output):
+        if torch.is_tensor(output):
+            return output.numel()
+        elif isinstance(output, (list, tuple)):
+            return sum(count_activations(o) for o in output)
+        elif hasattr(output, '__dict__'):
+            return sum(count_activations(v) for v in output.__dict__.values())
+        else:
+            return 0
+
+    # Register a forward hook on each module to count activations
+    def hook(module, input, output):
+        activations = count_activations(output)
+        activation_counts.append(activations)
+
+    hooks = []
+    for name, module in model.named_modules():
+        h = module.register_forward_hook(hook)
+        hooks.append(h)
+    # print(f"Registered {len(hooks)} hooks.")
+
+    if not params_only:
+        for dataset in datasets:
+            # Load the dataset
+            data = get_test_data(dataset, tokenizer, seq_len=model_seq_len, batch_size=batch_size)
+
+            seqlen = model_seq_len
+            n_samples = len(data)
+            nlls = []
+
+            with tqdm(range(n_samples), desc=f"Evaluating {dataset} - Perplexity") as progress_bar:
+                for i in progress_bar:
+                    batch = next(iter(data)).to(main_device)
+
+                    allocated, reserved = print_memory_usage()
+                    total_allocated_list.append(allocated)
+                    total_reserved_list.append(reserved)
+
+                    with torch.no_grad():
+                        output = model(batch)
+                        logits = output.logits if hasattr(output, "logits") else output[0]
+
+                    logits = logits.to(main_device)
+                    shift_logits = logits[:, :-1, :].contiguous().float()
+                    shift_labels = batch[:, 1:].contiguous()
+
+                    loss_fct = torch.nn.CrossEntropyLoss()
+                    loss = loss_fct(
+                        shift_logits.view(-1, shift_logits.size(-1)),
+                        shift_labels.view(-1)
+                    )
+                    neg_log_likelihood = loss.float() * seqlen
+                    nlls.append(neg_log_likelihood)
+
+                    curr_ppl = _perplexity(nlls, i + 1, seqlen)
+                    progress_bar.set_description(f"Evaluating {dataset} - Perplexity {curr_ppl:.3f}")
+
+            ppl = _perplexity(nlls, n_samples, seqlen)
+            ppls[dataset] = ppl.item()
+
+    # Remove the hooks after evaluation
+    for h in hooks:
+        h.remove()
+
+    # Calculate total activation parameters
+    total_activations = sum(activation_counts)
+    print(f"Total activation parameters: {total_activations / 1e9:.2f}B")
+
+    # 计算参数统计
+    threshold = 1e-6
+    non_zero_params = sum((p.abs() > threshold).sum().item() for p in model.parameters())
+
+    print("\n")
+    result_str = f"Experiment: {experiment_name}\n"
+    if not params_only:
+        avg_allocated = sum(total_allocated_list) / len(total_allocated_list)
+        avg_reserved = sum(total_reserved_list) / len(total_reserved_list)
+        result_str += f"PPL after evaluation: {ppls}\n"
+        result_str += f"Average Allocated Memory: {avg_allocated:.2f} MiB\n"
+        result_str += f"Average Reserved Memory: {avg_reserved:.2f} MiB\n"
+    
+    result_str += f"Number of non-zero parameters: {non_zero_params / 1e9:.2f}B\n"
+    if "Mixtral" in experiment_name:
+        org_params = 46.70e9
+        result_str += f"Compression ratio: {1 - (non_zero_params / org_params):.2f}%\n"
+        result_str += f"Save ratio: {non_zero_params / org_params:.2f}%\n"
+    elif "Llamix" in experiment_name:
+        org_params = 0.40e9
+        result_str += f"Compression ratio: {1 - (non_zero_params / org_params):.2f}%\n"
+        result_str += f"Save ratio: {non_zero_params / org_params:.2f}%\n"
+
+    print(result_str)
+
+
 
 def print_memory_usage():
     total_gpus = torch.cuda.device_count()

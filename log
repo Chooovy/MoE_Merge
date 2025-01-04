@@ -189,3 +189,123 @@ Average Reserved Memory: 20620.91 MiB
 Total number of parameters: 0.40B
 Number of trainable parameters: 0.40B
 Number of non-trainable parameters: 0.00B
+
+----------------------------------------------------------------
+32 calibration scale matrix
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-0.2
+PPL after evaluation: {'wikitext2': 7.199442386627197}
+Average Allocated Memory: 139135.59 MiB
+Average Reserved Memory: 204422.18 MiB
+Number of non-zero parameters: 21.74B
+Compression ratio: 0.53%
+Save ratio: 0.47%
+
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-0.2
+PPL after evaluation: {'wikitext2': 9.585922241210938}
+Average Allocated Memory: 139135.59 MiB
+Average Reserved Memory: 170608.91 MiB
+Number of non-zero parameters: 18.93B
+Compression ratio: 0.59%
+Save ratio: 0.41%
+
+256 calibration scale matrix
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-0.2
+PPL after evaluation: {'wikitext2': 6.883844375610352}
+Average Allocated Memory: 139142.22 MiB
+Average Reserved Memory: 204342.18 MiB
+Number of non-zero parameters: 21.74B
+Compression ratio: 0.53%
+Save ratio: 0.47%
+
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-0.2
+PPL after evaluation: {'wikitext2': 9.449755668640137}
+Average Allocated Memory: 139142.22 MiB
+Average Reserved Memory: 166326.73 MiB
+Number of non-zero parameters: 18.92B
+Compression ratio: 0.59%
+Save ratio: 0.41%
+---
+128 calibration scale matrix
+Experiment: Mixtral-8x7B-delta-0.5-share-1
+PPL after evaluation: {'wikitext2': 7.138124942779541}
+Average Allocated Memory: 139191.78 MiB
+Average Reserved Memory: 235956.36 MiB
+Number of non-zero parameters: 21.74B
+Compression ratio: 0.53%
+Save ratio: 0.47%
+
+Experiment: Mixtral-8x7B-delta-0.5-share-1
+PPL after evaluation: {'wikitext2': 10.042036056518555}
+Average Allocated Memory: 139191.78 MiB
+Average Reserved Memory: 182778.36 MiB
+Number of non-zero parameters: 18.92B
+Compression ratio: 0.59%
+Save ratio: 0.41%
+---
+512 calibration scale matrix
+Experiment: Mixtral-8x7B-delta-0.5-share-1
+PPL after evaluation: {'wikitext2': 6.841766834259033}
+Average Allocated Memory: 139136.78 MiB
+Average Reserved Memory: 203454.18 MiB
+Number of non-zero parameters: 21.74B
+Compression ratio: 0.53%
+Save ratio: 0.47%
+
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-0.2
+PPL after evaluation: {'wikitext2': 6.897535800933838}
+Average Allocated Memory: 139136.78 MiB
+Average Reserved Memory: 194761.45 MiB
+Number of non-zero parameters: 20.56B
+Compression ratio: 0.56%
+Save ratio: 0.44%
+--
+512 calibration scale matrix 0.25 delta
+Experiment: Mixtral-8x7B-delta-0.25-share-1
+PPL after evaluation: {'wikitext2': 8.736645698547363}
+Average Allocated Memory: 125368.44 MiB
+Average Reserved Memory: 214114.36 MiB
+Number of non-zero parameters: 14.49B
+Compression ratio: 0.69%
+Save ratio: 0.31%
+
+Experiment: Mixtral-8x7B-delta-0.25-share-1-sparsity-0.2
+PPL after evaluation: {'wikitext2': 8.807462692260742}
+Average Allocated Memory: 125368.44 MiB
+Average Reserved Memory: 182092.55 MiB
+Number of non-zero parameters: 13.31B
+Compression ratio: 0.71%
+Save ratio: 0.29%
+---
+fisher merge
+Experiment: Mixtral-8x7B-delta-0.5-share-1
+PPL after evaluation: {'wikitext2': 9.042951583862305}
+Average Allocated Memory: 139192.03 MiB
+Average Reserved Memory: 230548.36 MiB
+Number of non-zero parameters: 21.74B
+Compression ratio: 0.53%
+Save ratio: 0.47%
+
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-0.4
+PPL after evaluation: {'wikitext2': 10.579808235168457}
+Average Allocated Memory: 139192.03 MiB
+Average Reserved Memory: 201158.00 MiB
+Number of non-zero parameters: 19.46B
+Compression ratio: 0.58%
+Save ratio: 0.42%
+--
+random merge
+Experiment: Mixtral-8x7B-delta-0.5-share-1
+PPL after evaluation: {'wikitext2': 9.874951362609863}
+Average Allocated Memory: 139192.03 MiB
+Average Reserved Memory: 230548.36 MiB
+Number of non-zero parameters: 21.74B
+Compression ratio: 0.53%
+Save ratio: 0.47%
+
+Experiment: Mixtral-8x7B-delta-0.5-share-1-sparsity-0.4
+PPL after evaluation: {'wikitext2': 11.581901550292969}
+Average Allocated Memory: 139192.03 MiB
+Average Reserved Memory: 201338.00 MiB
+Number of non-zero parameters: 19.46B
+Compression ratio: 0.58%
+Save ratio: 0.42%

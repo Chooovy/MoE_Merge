@@ -30,6 +30,54 @@ def get_free_gpu():
     most_free_gpu_index = int(torch.argmax(torch.tensor(free_memory)))
     return f'cuda:{most_free_gpu_index}'
 
+def linear_cka(Linear1, Linear2):
+
+    W1 = Linear1.weight.data.to(Linear1.weight.device)
+    W2 = Linear2.weight.data.to(Linear2.weight.device)
+    # 中心化
+    def center_kernel(K):
+        n = (K.size(0))
+        one_n = (torch.ones(n, n, dtype=torch.bfloat16) / n).to(K.device)
+        return K - one_n @ K - K @ one_n + one_n @ K @ one_n
+
+    # 计算Gram矩阵
+    K = W1 @ W1.T
+    L = W2 @ W2.T
+
+    # 中心化Gram矩阵
+    Kc = center_kernel(K)
+    Lc = center_kernel(L)
+
+    # 计算CKA
+    numerator = torch.trace(Kc @ Lc)
+    denominator = torch.sqrt(torch.trace(Kc @ Kc) * torch.trace(Lc @ Lc))
+    cka_score = numerator / denominator
+    print(f"CKA between linear1 and linear2: {cka_score.item():.4f}")
+    return cka_score.item()
+
+
+def weight_cka(W1: torch.Tensor, W2: torch.Tensor) -> float:
+    # 中心化
+    def center_kernel(K):
+        n = K.size(0)
+        one_n = (torch.ones(n, n, dtype=torch.bfloat16) / n).to(K.device)
+        return K - one_n @ K - K @ one_n + one_n @ K @ one_n
+
+    # 计算Gram矩阵
+    K = W1 @ W1.T
+    L = W2 @ W2.T
+
+    # 中心化Gram矩阵
+    Kc = center_kernel(K)
+    Lc = center_kernel(L)
+
+    # 计算CKA
+    numerator = torch.trace(Kc @ Lc)
+    denominator = torch.sqrt(torch.trace(Kc @ Kc) * torch.trace(Lc @ Lc))
+    cka_score = numerator / denominator
+    print(f"CKA between linear1 and linear2: {cka_score.item():.4f}")
+
+
 def get_expert_frequency(model, tokenizer, model_name, dataset_name, split, seed, max_samples = None, batch_size = 32):
     selected_layers = list(range(len(model.model.layers)))
 
@@ -854,28 +902,33 @@ class Merge_MixtralSparseMoeBlock(nn.Module):
             shared_v2 = nn.Parameter(shared_v2)
             shared_v3 = nn.Parameter(shared_v3)
 
-            shared_u1  = None
-            shared_u2  = None
-            shared_u3  = None
-            total_freq = 0
-            for j in range(self.num_experts):
-                freq = self.expert_freq[j]
-                total_freq += freq
-                if shared_u1 is None:
-                    shared_u1 = delta_u1[j * self.experts[j].delta_u1.weight.shape[0]:(j + 1) * self.experts[j].delta_u1.weight.shape[0], :] * freq 
-                else:
-                    shared_u1 += delta_u1[j * self.experts[j].delta_u1.weight.shape[0]:(j + 1) * self.experts[j].delta_u1.weight.shape[0], :] * freq
-                if shared_u2 is None:
-                    shared_u2 = delta_u2[j * self.experts[j].delta_u2.weight.shape[0]:(j + 1) * self.experts[j].delta_u2.weight.shape[0], :] * freq
-                else:
-                    shared_u2 += delta_u2[j * self.experts[j].delta_u2.weight.shape[0]:(j + 1) * self.experts[j].delta_u2.weight.shape[0], :] * freq
-                if shared_u3 is None:
-                    shared_u3 = delta_u3[j * self.experts[j].delta_u3.weight.shape[0]:(j + 1) * self.experts[j].delta_u3.weight.shape[0], :] * freq
-                else:
-                    shared_u3 += delta_u3[j * self.experts[j].delta_u3.weight.shape[0]:(j + 1) * self.experts[j].delta_u3.weight.shape[0], :] * freq
-            shared_u1 /= total_freq
-            shared_u2 /= total_freq
-            shared_u3 /= total_freq
+            j = 0
+            shared_u1  = delta_u1[j * self.experts[j].delta_u1.weight.shape[0]:(j + 1) * self.experts[j].delta_u1.weight.shape[0], :]
+            shared_u2  = delta_u2[j * self.experts[j].delta_u2.weight.shape[0]:(j + 1) * self.experts[j].delta_u2.weight.shape[0], :]
+            shared_u3  = delta_u3[j * self.experts[j].delta_u3.weight.shape[0]:(j + 1) * self.experts[j].delta_u3.weight.shape[0], :]
+
+            # shared_u1  = None
+            # shared_u2  = None
+            # shared_u3  = None
+            # total_freq = 0
+            # for j in range(self.num_experts):
+            #     freq = self.expert_freq[j]
+            #     total_freq += freq
+            #     if shared_u1 is None:
+            #         shared_u1 = delta_u1[j * self.experts[j].delta_u1.weight.shape[0]:(j + 1) * self.experts[j].delta_u1.weight.shape[0], :] * freq 
+            #     else:
+            #         shared_u1 += delta_u1[j * self.experts[j].delta_u1.weight.shape[0]:(j + 1) * self.experts[j].delta_u1.weight.shape[0], :] * freq
+            #     if shared_u2 is None:
+            #         shared_u2 = delta_u2[j * self.experts[j].delta_u2.weight.shape[0]:(j + 1) * self.experts[j].delta_u2.weight.shape[0], :] * freq
+            #     else:
+            #         shared_u2 += delta_u2[j * self.experts[j].delta_u2.weight.shape[0]:(j + 1) * self.experts[j].delta_u2.weight.shape[0], :] * freq
+            #     if shared_u3 is None:
+            #         shared_u3 = delta_u3[j * self.experts[j].delta_u3.weight.shape[0]:(j + 1) * self.experts[j].delta_u3.weight.shape[0], :] * freq
+            #     else:
+            #         shared_u3 += delta_u3[j * self.experts[j].delta_u3.weight.shape[0]:(j + 1) * self.experts[j].delta_u3.weight.shape[0], :] * freq
+            # shared_u1 /= total_freq
+            # shared_u2 /= total_freq
+            # shared_u3 /= total_freq
 
             shared_u1 = nn.Parameter(shared_u1)
             shared_u2 = nn.Parameter(shared_u2)

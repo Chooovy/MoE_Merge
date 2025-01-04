@@ -1,4 +1,4 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 import torch.nn.functional as F 
 from transformers.models.mixtral.modeling_mixtral import *
@@ -9,81 +9,52 @@ from functools import partial
 from component.merge_mixtral_keepWmean_scale_delta import *
 from component.evaluater import ppl_eval_sharing
 
-path = "/aifs4su/gov/models/Mixtral-8x7B-v0.1/"  # 8 experts
-# path = "/aifs4su/lilujun/SVD-MoE-merge/SmolLlamix-8x101M"
-# path = "/aifs4su/gov/models/Llama-2-7b-chat-hf/"
+path = "/aifs4su/gov/models/Mixtral-8x7B-v0.1"
 
 
-model = AutoModelForCausalLM.from_pretrained(path, device_map="auto", trust_remote_code=True, 
-                                             torch_dtype=torch.bfloat16)
+model = AutoModelForCausalLM.from_pretrained(path, device_map="auto", trust_remote_code=True, torch_dtype=torch.bfloat16)
 
 tokenizer = AutoTokenizer.from_pretrained(path, use_fast=False)
 
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
-selected_layers = [0,1,2,3,4,5,6]
-svd_scale = get_svd_scale(model, tokenizer, "Mixtral-8x7B-v0.1", max_samples=1000, selected_layers=selected_layers)
-torch.save(svd_scale, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/SVD_scale_Mixtral_{selected_layers}.pt")
-# ppl_eval_sharing(model, tokenizer, experiment_name="SmolLlamix-8x101M", datasets=['wikitext2'], params_only=False)
+with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/Mixtral_wikitext_20000_expert_frequencies.json', 'r') as f:
+    expert_freq = json.load(f)
 
-# expert_outputs = calculate_expert_outputs(
-#     model=model.model,
-#     tokenizer=tokenizer,
-#     max_samples=1000  # 限制样本数量
-# )
+svd_scale_path = "/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/SVD_scale_Mixtral_0-31_512.pt"
+svd_scale = torch.load(svd_scale_path, map_location='cpu')
 
-# Save expert outputs to .pt file
-# torch.save(expert_outputs, '/aifs4su/lilujun/SVD-MoE-merge/MoE/expert_outputs.pt')
+fisher_path = "/aifs4su/lilujun/SVD-MoE-merge/outputs/fisher_Mixtral-8x7B_diagonal.pt"
+# fisher_path = "/aifs4su/lilujun/SVD-MoE-merge/outputs/fisher_Mixtral-8x7B.pt"
+fisher_info = torch.load(fisher_path, map_location="cpu")
 
-# Load expert outputs from .pt file 
-# expert_outputs = torch.load('/aifs4su/lilujun/SVD-MoE-merge/MoE/expert_outputs.pt')
+delta_ratio = 0.5
+share_ratio = 1
+share_V = True
+share_U = False
+merge_method = "fisher"
 
+layer_delta_ratio = get_rank(model, tokenizer, sparsity_ratio=delta_ratio)
 
-# expert_freq = calculate_expert_frequency(
-#     model=model.model,
-#     tokenizer=tokenizer,
-#     dataset_name="wikitext",
-#     split="train",
-#     model_seq_len=2048,
-#     batch_size=5,
-#     device="cuda" if torch.cuda.is_available() else "cpu",
-#     max_samples=4000,
-#     seed=42,
-# )
+for i in tqdm(range(len(model.model.layers)), desc="Merging layers"):
+    Merge_MoE_Block = Merge_MixtralSparseMoeBlock(model.config, share_ratio=share_ratio, 
+                                                  delta_ratio=layer_delta_ratio[i], expert_freq=expert_freq[str(i)], 
+                                                  delta_share_V=share_V, delta_share_U=share_U, merge_method=merge_method).to(get_free_gpu())
+    Merge_MoE_Block.merge_experts(model.model.layers[i].block_sparse_moe, svd_scale=svd_scale[i], hessian = fisher_info[i], scale_type='svdllm')
+    model.model.layers[i].block_sparse_moe = Merge_MoE_Block
 
 
-# with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/SmolLlamix-8x101M_expert_frequencies.json', 'w') as f:
-#     json.dump(expert_freq, f)
+sparsity_ratio = 0.4
 
-# with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/Mixtral_wikitext_20000_expert_frequencies.json', 'r') as f:
-#     expert_freq = json.load(f)
+ppl_eval_sharing(model, tokenizer, experiment_name=f"Mixtral-8x7B-delta-{delta_ratio}-merge_method-{merge_method}", 
+                 datasets=['wikitext2'], params_only=False)
 
-# with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/SmolLlamix_wikitext_5000_expert_frequencies.json', 'r') as f:
-#     expert_freq = json.load(f)
+save_model(model, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-delta-{delta_ratio}-share_V-{share_V}-share_U-{share_U}-merge_method-{merge_method}-owl_rank.pt")
+torch.save(layer_delta_ratio, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-owl_rank.pt")
 
-# svd_scale_path = "/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/SVD_scale_SmolLlamix.pt"
-# svd_scale = torch.load(svd_scale_path)
+# prune_wanda(model, tokenizer, nsamples=1000, seed=42, seqlen=2048, sparsity_ratio=sparsity_ratio, 
+#             use_variant=True, use_rescale=False, prune_layer_name="Wmean")
 
-# with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/SmolLlamix-8x101M_expert_mean_freq.json', 'r') as f:
-#     expert_freq = json.load(f)
-
-# delta_ratio = 0.5
-# share_ratio = 1
-
-# for i in tqdm(range(len(model.model.layers)), desc="Merging layers"):
-#     Merge_MoE_Block = Merge_MixtralSparseMoeBlock(model.model.layers[i].block_sparse_moe.config, share_ratio=share_ratio, 
-#                                                   delta_ratio=delta_ratio, expert_freq=expert_freq[str(i)]).to(get_free_gpu())
-#     Merge_MoE_Block.merge_experts(model.model.layers[i].block_sparse_moe, svd_scale=None, share_V=True, share_U=False)
-#     model.model.layers[i].block_sparse_moe = Merge_MoE_Block
-
-
-# ppl_eval_sharing(model, tokenizer, experiment_name=f"SmolLlamix-delta-{delta_ratio}-share-{share_ratio}", datasets=['wikitext2'], params_only=False)
-
-# sparsity_ratio = 0.2
-# prune_wanda(model, tokenizer, nsamples=1000, seed=42, seqlen=2048, sparsity_ratio=sparsity_ratio, use_variant=True, use_rescale=False)
-
-# save_model(model, "/aifs4su/lilujun/SVD-MoE-merge/MoE/SmolLlamix-8x101M_0.35_svd_delta_merged.pt")
-# save_model(model, "/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-v0.1_delta-0.5_keepWmean_share-1_svd_no_scale.pt")
-
-# ppl_eval_sharing(model, tokenizer, experiment_name=f"Mixtral-8x7B-delta-{delta_ratio}-share-{share_ratio}-sparsity-{sparsity_ratio}", datasets=['wikitext2'], params_only=False)
+# ppl_eval_sharing(model, tokenizer, experiment_name=f"Mixtral-8x7B-delta-{delta_ratio}-sparsity-{sparsity_ratio}-merge_method-{merge_method}", 
+#                  datasets=['wikitext2'], params_only=False)

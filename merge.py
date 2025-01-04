@@ -17,8 +17,7 @@ moe_layers = model.model.layers
 layer_idx = 0  # Adjust based on the specific MoE layer
 moe_layer = moe_layers[layer_idx]
 experts = moe_layer.block_sparse_moe.experts  # Adjust attribute names if needed
-num_experts = len(experts)
-print(f"Number of experts: {num_experts}")
+experts_prefix = "model.model.layers." + str(layer_idx) + ".block_sparse_moe.experts"
 
 # Step 2: Compute the Fisher Information Matrices for each expert
 def compute_fisher_for_expert(expert, dataloader, device='cuda'):
@@ -48,27 +47,24 @@ def compute_fisher_for_expert(expert, dataloader, device='cuda'):
     return fisher_dict
 
 # Prepare dataset
-dataset = load_dataset('wikitext', 'wikitext-2-raw-v1', split='train')
-def tokenize_function(examples):
-    return tokenizer(examples['text'], padding='max_length', truncation=True, max_length=128)
-tokenized_dataset = dataset.map(tokenize_function, batched=True, remove_columns=['text'])
-tokenized_dataset.set_format(type='torch')
-dataloader = DataLoader(tokenized_dataset, batch_size=8)
+# dataset = load_dataset('wikitext', 'wikitext-2-raw-v1', split='train')
+# def tokenize_function(examples):
+#     return tokenizer(examples['text'], padding='max_length', truncation=True, max_length=128)
+# tokenized_dataset = dataset.map(tokenize_function, batched=True, remove_columns=['text'])
+# tokenized_dataset.set_format(type='torch')
+# dataloader = DataLoader(tokenized_dataset, batch_size=8)
+# # torch.save(dataloader, "/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/dataloader_4gradient_merge.pt")
+# dataloader = torch.load("/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/dataloader_4gradient_merge.pt")
 
-# dataloader = torch.load("/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/dataloader_wikitext2_128.pt")
-
-# Compute Fisher matrices
-expert_fishers = []
-for idx, expert in enumerate(experts):
-    print(f"Computing Fisher matrix for expert {idx+1}/{num_experts}")
-    fisher = compute_fisher_for_expert(model, dataloader)
-    expert_fishers.append(fisher)
+# fisher = compute_fisher_for_expert(model, dataloader)
+# torch.save(fisher, "/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/fisher_4gradient_merge.pt")
+fisher = torch.load("/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/fisher_4gradient_merge.pt")
 
 # Step 3: Merge the experts
 def merge_experts(experts, expert_fishers, scaling_factors, delta_0, scaling_factor_overall):
     merged_params = {}
     preconditioners = {}
-    param_names = experts[0].state_dict().keys()
+    param_names = experts.state_dict().keys()
     for name in param_names:
         summed_fisher = sum(
             scaling_factor * expert_fisher[name]
@@ -91,7 +87,7 @@ delta_0 = 1e-12
 scaling_factor_overall = 1.0
 scaling_factors = [1.0 for _ in experts]
 
-merged_expert = merge_experts(experts, expert_fishers, scaling_factors, delta_0, scaling_factor_overall)
+merged_expert = merge_experts(experts, fisher, scaling_factors, delta_0, scaling_factor_overall)
 
 # Step 4: Update the MoE model
 moe_layer.block_sparse_moe.experts = ModuleList([merged_expert])
