@@ -101,8 +101,8 @@ share_V = True
 share_U = False
 deepcopy = False
 
-# layer_delta_ratio = get_rank(model, tokenizer, sparsity_ratio=delta_ratio)
-layer_delta_ratio = [delta_ratio] * len(model.model.layers)
+layer_delta_ratio = get_rank(model, tokenizer, sparsity_ratio=delta_ratio, Hyper_m=3, Lamda=0.1, fisher_info=None)
+# layer_delta_ratio = [delta_ratio] * len(model.model.layers)
 
 for i in tqdm(range(len(model.model.layers)), desc="Merging layers"):
     Merge_MoE_Block = Merge_MixtralSparseMoeBlock(model.config, share_ratio=share_ratio, 

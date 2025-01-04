@@ -25,8 +25,8 @@ with open('/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/Mixtral_wikitext_20000_exper
 svd_scale_path = "/aifs4su/lilujun/SVD-MoE-merge/MoE/cache/SVD_scale_Mixtral_0-31_512.pt"
 svd_scale = torch.load(svd_scale_path, map_location='cpu')
 
-fisher_path = "/aifs4su/lilujun/SVD-MoE-merge/outputs/fisher_Mixtral-8x7B_diagonal.pt"
-# fisher_path = "/aifs4su/lilujun/SVD-MoE-merge/outputs/fisher_Mixtral-8x7B.pt"
+# fisher_path = "/aifs4su/lilujun/SVD-MoE-merge/outputs/fisher_Mixtral-8x7B_diagonal.pt"
+fisher_path = "/aifs4su/lilujun/SVD-MoE-merge/outputs/fisher_Mixtral-8x7B.pt"
 fisher_info = torch.load(fisher_path, map_location="cpu")
 
 delta_ratio = 0.5
@@ -35,7 +35,8 @@ share_V = True
 share_U = False
 merge_method = "fisher"
 
-layer_delta_ratio = get_rank(model, tokenizer, sparsity_ratio=delta_ratio)
+layer_delta_ratio = get_rank(model, tokenizer, sparsity_ratio=delta_ratio, Hyper_m=5, Lamda=0.1, fisher_info=fisher_info)
+# layer_delta_ratio = [delta_ratio] * len(model.model.layers)
 
 for i in tqdm(range(len(model.model.layers)), desc="Merging layers"):
     Merge_MoE_Block = Merge_MixtralSparseMoeBlock(model.config, share_ratio=share_ratio, 
@@ -50,8 +51,9 @@ sparsity_ratio = 0.4
 ppl_eval_sharing(model, tokenizer, experiment_name=f"Mixtral-8x7B-delta-{delta_ratio}-merge_method-{merge_method}", 
                  datasets=['wikitext2'], params_only=False)
 
-save_model(model, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-delta-{delta_ratio}-share_V-{share_V}-share_U-{share_U}-merge_method-{merge_method}-owl_rank.pt")
-torch.save(layer_delta_ratio, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-owl_rank.pt")
+# save_model(model, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-delta-{delta_ratio}-share_V-{share_V}-share_U-{share_U}-merge_method-{merge_method}-not_diagonal.pt")
+# save_model(model, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-delta-{delta_ratio}-share_V-{share_V}-share_U-{share_U}-merge_method-{merge_method}-owl_rank.pt")
+# torch.save(layer_delta_ratio, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-owl_rank.pt")
 
 # prune_wanda(model, tokenizer, nsamples=1000, seed=42, seqlen=2048, sparsity_ratio=sparsity_ratio, 
 #             use_variant=True, use_rescale=False, prune_layer_name="Wmean")

@@ -615,7 +615,7 @@ def check_outlier_mean(mask,threshold):
     return outlier_ratio
 
 def get_rank(model, tokenizer, device=torch.device("cuda:0"), nsamples = 128, seed = 42, seqlen = 2048, 
-                        Hyper_m = 5, Lamda = 0.08, sparsity_ratio = 0.5):
+                        Hyper_m = 5, Lamda = 0.08, sparsity_ratio = 0.5, fisher_info = None):
     all_layer_ratio=[]
     use_cache = model.config.use_cache 
     model.config.use_cache = False 
@@ -659,6 +659,8 @@ def get_rank(model, tokenizer, device=torch.device("cuda:0"), nsamples = 128, se
             # print(f"pruning layer {i} name {name}")
             W_metric = torch.abs(subset[name].weight.data) * torch.sqrt(wrapped_layers[name].scaler_row.reshape((1,-1)))
 
+            if fisher_info is not None:
+                W_metric = W_metric * fisher_info[i][name]
 
             activation_data=torch.sqrt(wrapped_layers[name].scaler_row.reshape((1,-1)))
             layer_wmetric.append(W_metric)    
@@ -677,12 +679,12 @@ def get_rank(model, tokenizer, device=torch.device("cuda:0"), nsamples = 128, se
 
         all_layer_ratio.append(out_ratio_layer)
 
-    print ("before adjustment",all_layer_ratio)
+    # print ("before adjustment",all_layer_ratio)
     
     all_layer_ratio=np.array(all_layer_ratio)
     all_layer_ratio = ((all_layer_ratio - all_layer_ratio.min()) * (1/(all_layer_ratio.max() - all_layer_ratio.min()) * Lamda*2))
     all_layer_ratio=all_layer_ratio-np.mean(all_layer_ratio)+(1-sparsity_ratio)
-    print (all_layer_ratio,np.mean(all_layer_ratio),np.max(all_layer_ratio),np.min(all_layer_ratio))
+    # print (all_layer_ratio,np.mean(all_layer_ratio),np.max(all_layer_ratio),np.min(all_layer_ratio))
 
     print ("after adjustment",all_layer_ratio  )
     return all_layer_ratio
