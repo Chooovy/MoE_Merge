@@ -657,10 +657,11 @@ def get_rank(model, tokenizer, device=torch.device("cuda:0"), nsamples = 128, se
 
         for name in subset:
             # print(f"pruning layer {i} name {name}")
-            W_metric = torch.abs(subset[name].weight.data) * torch.sqrt(wrapped_layers[name].scaler_row.reshape((1,-1)))
+            W_metric = torch.abs(subset[name].weight.data)
+            # torch.sqrt(wrapped_layers[name].scaler_row.reshape((1,-1)))
 
             if fisher_info is not None:
-                W_metric = W_metric * fisher_info[i][name]
+                W_metric = W_metric * fisher_info[i][name].to(W_metric.device)
 
             activation_data=torch.sqrt(wrapped_layers[name].scaler_row.reshape((1,-1)))
             layer_wmetric.append(W_metric)    

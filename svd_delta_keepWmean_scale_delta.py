@@ -35,7 +35,7 @@ share_V = True
 share_U = False
 merge_method = "fisher"
 
-layer_delta_ratio = get_rank(model, tokenizer, sparsity_ratio=delta_ratio, Hyper_m=5, Lamda=0.1, fisher_info=fisher_info)
+layer_delta_ratio = get_rank(model, tokenizer, sparsity_ratio=delta_ratio, Hyper_m=3, Lamda=0.1, fisher_info=fisher_info)
 # layer_delta_ratio = [delta_ratio] * len(model.model.layers)
 
 for i in tqdm(range(len(model.model.layers)), desc="Merging layers"):
