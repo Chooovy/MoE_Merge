@@ -29,7 +29,7 @@ svd_scale = torch.load(svd_scale_path, map_location='cpu')
 fisher_path = "/aifs4su/lilujun/SVD-MoE-merge/outputs/fisher_Mixtral-8x7B.pt"
 fisher_info = torch.load(fisher_path, map_location="cpu")
 
-delta_ratio = 0.5
+delta_ratio = 0.7549
 share_ratio = 1
 share_V = True
 share_U = False
@@ -46,17 +46,17 @@ for i in tqdm(range(len(model.model.layers)), desc="Merging layers"):
     model.model.layers[i].block_sparse_moe = Merge_MoE_Block
 
 
-sparsity_ratio = 0.4
+# sparsity_ratio = 0.4
 
-ppl_eval_sharing(model, tokenizer, experiment_name=f"Mixtral-8x7B-delta-{delta_ratio}-merge_method-{merge_method}", 
+ppl_eval_sharing(model, tokenizer, experiment_name=f"Mixtral-8x7B-delta-{delta_ratio}", 
                  datasets=['wikitext2'], params_only=False)
 
 # save_model(model, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-delta-{delta_ratio}-share_V-{share_V}-share_U-{share_U}-merge_method-{merge_method}-not_diagonal.pt")
-# save_model(model, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-delta-{delta_ratio}-share_V-{share_V}-share_U-{share_U}-merge_method-{merge_method}-owl_rank.pt")
-# torch.save(layer_delta_ratio, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/Mixtral-8x7B-owl_rank.pt")
+import os
+os.makedirs(f"/aifs4su/lilujun/SVD-MoE-merge/MoE/results/Mixtral-8x7B-delta-{delta_ratio}-share_V-{share_V}-share_U-{share_U}-merge_method-{merge_method}-owl_rank", exist_ok=True)
+
+save_model(model, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/results/Mixtral-8x7B-delta-{delta_ratio}-share_V-{share_V}-share_U-{share_U}-merge_method-{merge_method}-owl_rank/model.pt")
+torch.save(layer_delta_ratio, f"/aifs4su/lilujun/SVD-MoE-merge/MoE/results/Mixtral-8x7B-delta-{delta_ratio}-share_V-{share_V}-share_U-{share_U}-merge_method-{merge_method}-owl_rank/owl_rank.pt")
 
 # prune_wanda(model, tokenizer, nsamples=1000, seed=42, seqlen=2048, sparsity_ratio=sparsity_ratio, 
 #             use_variant=True, use_rescale=False, prune_layer_name="Wmean")
-
-# ppl_eval_sharing(model, tokenizer, experiment_name=f"Mixtral-8x7B-delta-{delta_ratio}-sparsity-{sparsity_ratio}-merge_method-{merge_method}", 
-#                  datasets=['wikitext2'], params_only=False)

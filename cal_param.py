@@ -6,7 +6,7 @@ A = attention_intermediate_size = 1024
 L = num_layers = 32
 
 
-ratio = 0.25
+ratio = 0.5
 trunc_ratio = (H*M*ratio)/(H+M)
 # print(f"trunc_ratio: {trunc_ratio}")
 
